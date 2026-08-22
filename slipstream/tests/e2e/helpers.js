@@ -14,9 +14,17 @@ export async function signUp(page, { phone, name }) {
   await page.locator('#code').fill(code)
   await page.getByRole('button', { name: /Verify & continue/i }).click()
 
-  // A number the server has not seen before needs a name first.
+  // A number the server has not seen before needs a name first. Wait for
+  // whichever surface the verify call actually produces — sampling
+  // isVisible() straight after the click races the network, and when the
+  // response is slow the name step is silently skipped and the helper then
+  // waits forever for a home screen that never arrives.
   const nameField = page.locator('#name')
-  if (await nameField.isVisible().catch(() => false)) {
+  await Promise.race([
+    nameField.waitFor({ state: 'visible' }),
+    page.locator('.home-greeting').waitFor({ state: 'visible' }),
+  ])
+  if (await nameField.isVisible()) {
     await nameField.fill(name)
     await page.getByRole('button', { name: /Create my account/i }).click()
   }
