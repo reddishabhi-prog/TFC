@@ -52,15 +52,16 @@ authRoutes.post('/otp/verify', (req, res) => {
     entry.attempts += 1
     return res.status(400).json({ error: 'That code is not right', field: 'code' })
   }
-  otps.delete(phone)
-
-  // A brand-new number needs a name before an account can exist.
+  // A brand-new number needs a name before an account can exist. The OTP is
+  // deliberately NOT consumed yet: this branch sends the client back for a
+  // name and it must be able to re-verify with the same code.
   const existing = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
   if (!existing) {
     const nameError = validateName(name, { field: 'Name' })
     if (nameError) return res.status(400).json({ error: nameError, field: 'name', needsName: true })
   }
 
+  otps.delete(phone)
   const user = findOrCreateUserByPhone(phone, name)
   res.json({ token: signToken(user), user: publicUser(user) })
 })
