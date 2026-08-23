@@ -11,14 +11,14 @@ chatRoutes.use(requireAuth)
 const MAX_MESSAGE = 2000
 
 /** A thread is a ride the viewer rides in, or a standalone group they belong to. */
-function canSeeThread(userId, { rideId, groupId }) {
-  if (rideId) return !!db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?').get(rideId, userId)
-  if (groupId) return !!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId)
+async function canSeeThread(userId, { rideId, groupId }) {
+  if (rideId) return !!(await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?').get(rideId, userId))
+  if (groupId) return !!(await db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(groupId, userId))
   return false
 }
 
-chatRoutes.get('/threads', (req, res) => {
-  const rides = db
+chatRoutes.get('/threads', async (req, res) => {
+  const rides = await db
     .prepare(
       `SELECT r.id, r.name, r.status FROM rides r
          JOIN ride_members rm ON rm.ride_id = r.id
@@ -26,8 +26,8 @@ chatRoutes.get('/threads', (req, res) => {
     )
     .all(req.user.id)
 
-  const threads = rides.map((r) => {
-    const last = db
+  const threads = await Promise.all(rides.map(async (r) => {
+    const last = await db
       .prepare(
         `SELECT m.body, m.created_at, u.name FROM messages m JOIN users u ON u.id = m.user_id
           WHERE m.ride_id = ? ORDER BY m.created_at DESC LIMIT 1`,
@@ -38,36 +38,36 @@ chatRoutes.get('/threads', (req, res) => {
       kind: 'ride',
       name: r.name,
       status: r.status,
-      lastMessage: last ? { body: last.body, author: last.name, at: last.created_at } : null,
-      updatedAt: last?.created_at ?? 0,
+      lastMessage: last ? { body: last.body, author: last.name, at: Number(last.created_at) } : null,
+      updatedAt: last ? Number(last.created_at) : 0,
     }
-  })
+  }))
 
   threads.sort((a, b) => b.updatedAt - a.updatedAt)
   res.json({ threads })
 })
 
-chatRoutes.get('/rides/:rideId/messages', (req, res) => {
+chatRoutes.get('/rides/:rideId/messages', async (req, res) => {
   const { rideId } = req.params
-  if (!canSeeThread(req.user.id, { rideId })) return res.status(404).json({ error: 'Chat not found' })
+  if (!(await canSeeThread(req.user.id, { rideId }))) return res.status(404).json({ error: 'Chat not found' })
 
   const since = Number(req.query.since) || 0
-  const rows = db
+  const rows = await db
     .prepare(
-      `SELECT m.id, m.body, m.created_at AS createdAt, m.user_id AS userId,
-              u.name AS authorName, u.avatar_color AS avatarColor
+      `SELECT m.id, m.body, m.created_at AS "createdAt", m.user_id AS "userId",
+              u.name AS "authorName", u.avatar_color AS "avatarColor"
          FROM messages m JOIN users u ON u.id = m.user_id
         WHERE m.ride_id = ? AND m.created_at > ?
         ORDER BY m.created_at ASC LIMIT 300`,
     )
     .all(rideId, since)
 
-  res.json({ messages: rows.map((m) => ({ ...m, isMine: m.userId === req.user.id })) })
+  res.json({ messages: rows.map((m) => ({ ...m, createdAt: Number(m.createdAt), isMine: m.userId === req.user.id })) })
 })
 
-chatRoutes.post('/rides/:rideId/messages', (req, res) => {
+chatRoutes.post('/rides/:rideId/messages', async (req, res) => {
   const { rideId } = req.params
-  if (!canSeeThread(req.user.id, { rideId })) return res.status(404).json({ error: 'Chat not found' })
+  if (!(await canSeeThread(req.user.id, { rideId }))) return res.status(404).json({ error: 'Chat not found' })
 
   const body = String(req.body?.body ?? '').trim()
   if (!body) return res.status(400).json({ error: 'Type a message first', field: 'body' })
@@ -75,7 +75,7 @@ chatRoutes.post('/rides/:rideId/messages', (req, res) => {
 
   const id = uid('msg')
   const createdAt = now()
-  db.prepare('INSERT INTO messages (id, ride_id, user_id, body, created_at) VALUES (?,?,?,?,?)')
+  await db.prepare('INSERT INTO messages (id, ride_id, user_id, body, created_at) VALUES (?,?,?,?,?)')
     .run(id, rideId, req.user.id, body, createdAt)
 
   res.status(201).json({
@@ -98,14 +98,14 @@ const serializeVehicle = (v) => ({
   model: v.model,
   regNo: v.reg_no,
   odometerKm: v.odometer_km,
-  insuranceDue: v.insurance_due,
-  pucDue: v.puc_due,
-  serviceDue: v.service_due,
-  createdAt: v.created_at,
+  insuranceDue: v.insurance_due ? Number(v.insurance_due) : null,
+  pucDue: v.puc_due ? Number(v.puc_due) : null,
+  serviceDue: v.service_due ? Number(v.service_due) : null,
+  createdAt: Number(v.created_at),
 })
 
-garageRoutes.get('/', (req, res) => {
-  const rows = db.prepare('SELECT * FROM vehicles WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id)
+garageRoutes.get('/', async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM vehicles WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id)
   res.json({ vehicles: rows.map(serializeVehicle) })
 })
 
@@ -136,39 +136,41 @@ function readVehicle(req) {
   }
 }
 
-garageRoutes.post('/', (req, res) => {
+garageRoutes.post('/', async (req, res) => {
   const { value, errors } = readVehicle(req)
   if (errors) return res.status(400).json({ error: 'Check the form', errors })
 
   const id = uid('veh')
-  db.prepare(
+  await db.prepare(
     `INSERT INTO vehicles (id, user_id, nickname, brand, model, reg_no, odometer_km,
        insurance_due, puc_due, service_due, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(id, req.user.id, value.nickname, value.brand, value.model, value.reg_no,
     value.odometer_km, value.insurance_due, value.puc_due, value.service_due, now())
 
-  res.status(201).json({ vehicle: serializeVehicle(db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id)) })
+  const saved = await db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id)
+  res.status(201).json({ vehicle: serializeVehicle(saved) })
 })
 
-garageRoutes.patch('/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM vehicles WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id)
+garageRoutes.patch('/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM vehicles WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id)
   if (!existing) return res.status(404).json({ error: 'Vehicle not found' })
 
   const { value, errors } = readVehicle(req)
   if (errors) return res.status(400).json({ error: 'Check the form', errors })
 
-  db.prepare(
+  await db.prepare(
     `UPDATE vehicles SET nickname=?, brand=?, model=?, reg_no=?, odometer_km=?,
        insurance_due=?, puc_due=?, service_due=? WHERE id=?`,
   ).run(value.nickname, value.brand, value.model, value.reg_no, value.odometer_km,
     value.insurance_due, value.puc_due, value.service_due, existing.id)
 
-  res.json({ vehicle: serializeVehicle(db.prepare('SELECT * FROM vehicles WHERE id = ?').get(existing.id)) })
+  const saved = await db.prepare('SELECT * FROM vehicles WHERE id = ?').get(existing.id)
+  res.json({ vehicle: serializeVehicle(saved) })
 })
 
-garageRoutes.delete('/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM vehicles WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id)
+garageRoutes.delete('/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM vehicles WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id)
   if (!result.changes) return res.status(404).json({ error: 'Vehicle not found' })
   res.json({ deleted: true })
 })
@@ -178,21 +180,21 @@ garageRoutes.delete('/:id', (req, res) => {
 export const notificationRoutes = Router()
 notificationRoutes.use(requireAuth)
 
-notificationRoutes.get('/', (req, res) => {
-  const rows = db
+notificationRoutes.get('/', async (req, res) => {
+  const rows = await db
     .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 60')
     .all(req.user.id)
   res.json({
     notifications: rows.map((n) => ({
       id: n.id, kind: n.kind, title: n.title, body: n.body,
-      readAt: n.read_at, createdAt: n.created_at,
+      readAt: n.read_at ? Number(n.read_at) : null, createdAt: Number(n.created_at),
     })),
     unread: rows.filter((n) => !n.read_at).length,
   })
 })
 
-notificationRoutes.post('/read', (req, res) => {
-  db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL')
+notificationRoutes.post('/read', async (req, res) => {
+  await db.prepare('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL')
     .run(now(), req.user.id)
   res.json({ ok: true })
 })

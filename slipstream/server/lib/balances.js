@@ -6,27 +6,28 @@ import { db } from './db.js'
  *   negative  -> they owe the group
  * Recorded settlements move money back, so a fully settled group is all zeroes.
  */
-export function computeBalances(groupId) {
-  const members = db
+export async function computeBalances(groupId) {
+  const members = await db
     .prepare(
-      `SELECT u.id, u.name, u.avatar_color AS avatarColor
+      `SELECT u.id, u.name, u.avatar_color AS "avatarColor"
          FROM group_members gm JOIN users u ON u.id = gm.user_id
         WHERE gm.group_id = ?
-        ORDER BY gm.rowid`,
+        ORDER BY gm.seq`,
     )
     .all(groupId)
 
   const net = new Map(members.map((m) => [m.id, 0]))
   const bump = (id, delta) => { if (net.has(id)) net.set(id, net.get(id) + delta) }
 
-  for (const e of db.prepare('SELECT id, paid_by, amount FROM expenses WHERE group_id = ?').all(groupId)) {
+  const expenses = await db.prepare('SELECT id, paid_by, amount FROM expenses WHERE group_id = ?').all(groupId)
+  for (const e of expenses) {
     bump(e.paid_by, e.amount)
-    for (const s of db.prepare('SELECT user_id, share FROM expense_shares WHERE expense_id = ?').all(e.id)) {
-      bump(s.user_id, -s.share)
-    }
+    const shares = await db.prepare('SELECT user_id, share FROM expense_shares WHERE expense_id = ?').all(e.id)
+    for (const s of shares) bump(s.user_id, -s.share)
   }
 
-  for (const s of db.prepare('SELECT from_user, to_user, amount FROM settlements WHERE group_id = ?').all(groupId)) {
+  const settlements = await db.prepare('SELECT from_user, to_user, amount FROM settlements WHERE group_id = ?').all(groupId)
+  for (const s of settlements) {
     // Paying down a debt moves the payer toward zero from below.
     bump(s.from_user, s.amount)
     bump(s.to_user, -s.amount)

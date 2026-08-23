@@ -11,16 +11,16 @@ userRoutes.use(requireAuth)
  * by name is a prefix match. Results are deliberately thin — a phone search
  * confirms only that an account exists, and never exposes anyone's email.
  */
-userRoutes.get('/search', (req, res) => {
+userRoutes.get('/search', async (req, res) => {
   const q = String(req.query.q ?? '').trim()
   if (q.length < 3) return res.json({ results: [] })
 
   const digits = q.replace(/\D/g, '')
   let rows = []
   if (PHONE_RE.test(digits)) {
-    rows = db.prepare('SELECT * FROM users WHERE phone = ? LIMIT 1').all(digits)
+    rows = await db.prepare('SELECT * FROM users WHERE phone = ? LIMIT 1').all(digits)
   } else {
-    rows = db
+    rows = await db
       .prepare('SELECT * FROM users WHERE name LIKE ? AND id != ? ORDER BY name LIMIT 8')
       .all(`${q}%`, req.user.id)
   }
@@ -40,7 +40,7 @@ userRoutes.get('/search', (req, res) => {
  * be added to a group and settle up before they ever install the app. When
  * they later verify that number, findOrCreateUserByPhone returns this same row.
  */
-userRoutes.post('/invite', (req, res) => {
+userRoutes.post('/invite', async (req, res) => {
   const name = String(req.body?.name ?? '').trim()
   const phone = String(req.body?.phone ?? '').replace(/\D/g, '')
 
@@ -49,7 +49,7 @@ userRoutes.post('/invite', (req, res) => {
   const phoneError = validatePhone(phone)
   if (phoneError) return res.status(400).json({ error: phoneError, field: 'phone' })
 
-  const existing = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
+  const existing = await db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
   if (existing) return res.json({ user: publicUser(existing), created: false })
 
   const row = {
@@ -59,14 +59,14 @@ userRoutes.post('/invite', (req, res) => {
     avatar_color: '#378add',
     created_at: now(),
   }
-  db.prepare(
-    `INSERT INTO users (id, name, phone, avatar_color, created_at)
-     VALUES (@id, @name, @phone, @avatar_color, @created_at)`,
-  ).run(row)
-  res.status(201).json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(row.id)), created: true })
+  await db.prepare(
+    `INSERT INTO users (id, name, phone, avatar_color, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(row.id, row.name, row.phone, row.avatar_color, row.created_at)
+  const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.id)
+  res.status(201).json({ user: publicUser(created), created: true })
 })
 
-userRoutes.patch('/me', (req, res) => {
+userRoutes.patch('/me', async (req, res) => {
   const b = req.body ?? {}
   const errors = {}
 
@@ -78,7 +78,7 @@ userRoutes.patch('/me', (req, res) => {
     const e = validateEmail(b.email)
     if (e) errors.email = e
     else {
-      const taken = db
+      const taken = await db
         .prepare('SELECT 1 FROM users WHERE email = ? AND id != ?')
         .get(String(b.email).trim().toLowerCase(), req.user.id)
       if (taken) errors.email = 'That email is already in use'
@@ -101,14 +101,12 @@ userRoutes.patch('/me', (req, res) => {
     emergency_phone: b.emergencyPhone !== undefined
       ? (String(b.emergencyPhone).replace(/\D/g, '') || null)
       : req.user.emergency_phone,
-    id: req.user.id,
   }
 
-  db.prepare(
-    `UPDATE users SET name=@name, email=@email, blood_group=@blood_group,
-       medical_notes=@medical_notes, emergency_name=@emergency_name,
-       emergency_phone=@emergency_phone WHERE id=@id`,
-  ).run(next)
+  await db.prepare(
+    `UPDATE users SET name=?, email=?, blood_group=?, medical_notes=?, emergency_name=?, emergency_phone=? WHERE id=?`,
+  ).run(next.name, next.email, next.blood_group, next.medical_notes, next.emergency_name, next.emergency_phone, req.user.id)
 
-  res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) })
+  const saved = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)
+  res.json({ user: publicUser(saved) })
 })

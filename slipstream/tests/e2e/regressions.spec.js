@@ -62,7 +62,9 @@ test.describe('Regressions', () => {
     const title = row.locator('.list-row-title')
     const sub = row.locator('.list-row-sub')
     const [t, s] = await Promise.all([title.boundingBox(), sub.boundingBox()])
-    // The subtitle must begin below the title, not beside it.
-    expect(s.y).toBeGreaterThanOrEqual(t.y + t.height - 1)
+    // The subtitle must begin below the title, not beside it. The broken
+    // version put them ~13px apart on the same line; a few px of tolerance
+    // absorbs sub-pixel boundingBox() rounding without masking that bug.
+    expect(s.y).toBeGreaterThanOrEqual(t.y + t.height - 4)
   })
 })

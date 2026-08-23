@@ -8,30 +8,31 @@ rideRoutes.use(requireAuth)
 
 // Ambiguous glyphs (0/O, 1/I) are omitted — codes get read aloud and retyped.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-function freshJoinCode() {
+async function freshJoinCode() {
   for (let attempt = 0; attempt < 20; attempt++) {
     let code = ''
     for (let i = 0; i < 6; i++) code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]
-    if (!db.prepare('SELECT 1 FROM rides WHERE join_code = ?').get(code)) return code
+    if (!(await db.prepare('SELECT 1 FROM rides WHERE join_code = ?').get(code))) return code
   }
   throw new Error('Could not allocate a unique join code')
 }
 
-function serializeRide(ride, viewerId) {
-  const members = db
+async function serializeRide(ride, viewerId) {
+  const members = await db
     .prepare(
-      `SELECT u.id, u.name, u.avatar_color AS avatarColor, rm.role
+      `SELECT u.id, u.name, u.avatar_color AS "avatarColor", rm.role
          FROM ride_members rm JOIN users u ON u.id = rm.user_id
-        WHERE rm.ride_id = ? ORDER BY rm.rowid`,
+        WHERE rm.ride_id = ? ORDER BY rm.seq`,
     )
     .all(ride.id)
+  const group = await db.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
   return {
     id: ride.id,
     name: ride.name,
     description: ride.description,
     origin: ride.origin,
     destination: ride.destination,
-    startsAt: ride.starts_at,
+    startsAt: Number(ride.starts_at),
     durationHrs: ride.duration_hrs,
     visibility: ride.visibility,
     status: ride.status,
@@ -42,32 +43,32 @@ function serializeRide(ride, viewerId) {
     rating: ride.rating,
     notes: ride.notes,
     fuelCost: ride.fuel_cost,
-    createdAt: ride.created_at,
-    endedAt: ride.ended_at,
+    createdAt: Number(ride.created_at),
+    endedAt: ride.ended_at ? Number(ride.ended_at) : null,
     members,
     isLeader: ride.leader_id === viewerId,
-    groupId: db.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)?.id ?? null,
+    groupId: group?.id ?? null,
   }
 }
 
-rideRoutes.get('/', (req, res) => {
-  const rows = db
+rideRoutes.get('/', async (req, res) => {
+  const rows = await db
     .prepare(
       `SELECT r.* FROM rides r JOIN ride_members rm ON rm.ride_id = r.id
         WHERE rm.user_id = ? ORDER BY r.created_at DESC`,
     )
     .all(req.user.id)
-  res.json({ rides: rows.map((r) => serializeRide(r, req.user.id)) })
+  res.json({ rides: await Promise.all(rows.map((r) => serializeRide(r, req.user.id))) })
 })
 
-rideRoutes.get('/public', (req, res) => {
-  const rows = db
+rideRoutes.get('/public', async (req, res) => {
+  const rows = await db
     .prepare(`SELECT * FROM rides WHERE visibility = 'public' AND status != 'ended' ORDER BY starts_at ASC LIMIT 30`)
     .all()
-  res.json({ rides: rows.map((r) => serializeRide(r, req.user.id)) })
+  res.json({ rides: await Promise.all(rows.map((r) => serializeRide(r, req.user.id))) })
 })
 
-rideRoutes.post('/', (req, res) => {
+rideRoutes.post('/', async (req, res) => {
   const name = String(req.body?.name ?? '').trim()
   const error = validateName(name, { field: 'Ride name', max: 60 })
   if (error) return res.status(400).json({ error, field: 'name' })
@@ -86,76 +87,84 @@ rideRoutes.post('/', (req, res) => {
     duration_hrs: Number(req.body?.durationHrs) || null,
     visibility,
     status: 'live',
-    join_code: freshJoinCode(),
+    join_code: await freshJoinCode(),
     leader_id: leaderId,
     created_by: req.user.id,
     created_at: now(),
   }
 
-  db.transaction(() => {
-    db.prepare(
+  await db.transaction(async (tx) => {
+    await tx.prepare(
       `INSERT INTO rides (id, name, description, origin, destination, starts_at, duration_hrs,
          visibility, status, join_code, leader_id, created_by, created_at)
-       VALUES (@id,@name,@description,@origin,@destination,@starts_at,@duration_hrs,
-         @visibility,@status,@join_code,@leader_id,@created_by,@created_at)`,
-    ).run(ride)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      ride.id, ride.name, ride.description, ride.origin, ride.destination, ride.starts_at,
+      ride.duration_hrs, ride.visibility, ride.status, ride.join_code, ride.leader_id,
+      ride.created_by, ride.created_at,
+    )
 
-    const addMember = db.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?)')
-    for (const id of memberIds) addMember.run(ride.id, id, id === leaderId ? 'leader' : 'rider', now())
+    for (const id of memberIds) {
+      await tx.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?)')
+        .run(ride.id, id, id === leaderId ? 'leader' : 'rider', now())
+    }
 
     // Every ride gets an expense group up front, so "Split" is never empty
     // when riders open it mid-trip.
     const groupId = uid('grp')
-    db.prepare('INSERT INTO groups (id, name, ride_id, created_by, created_at) VALUES (?,?,?,?,?)')
+    await tx.prepare('INSERT INTO groups (id, name, ride_id, created_by, created_at) VALUES (?,?,?,?,?)')
       .run(groupId, ride.name, ride.id, req.user.id, now())
-    const addToGroup = db.prepare('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?)')
-    for (const id of memberIds) addToGroup.run(groupId, id, now())
+    for (const id of memberIds) {
+      await tx.prepare('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?)')
+        .run(groupId, id, now())
+    }
   })()
 
-  res.status(201).json({ ride: serializeRide(db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id), req.user.id) })
+  const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id)
+  res.status(201).json({ ride: await serializeRide(saved, req.user.id) })
 })
 
-rideRoutes.post('/join', (req, res) => {
+rideRoutes.post('/join', async (req, res) => {
   const code = String(req.body?.joinCode ?? '').trim().toUpperCase()
   if (code.length !== 6) return res.status(400).json({ error: 'Join codes are 6 characters', field: 'joinCode' })
 
-  const ride = db.prepare('SELECT * FROM rides WHERE join_code = ?').get(code)
+  const ride = await db.prepare('SELECT * FROM rides WHERE join_code = ?').get(code)
   if (!ride) return res.status(404).json({ error: 'No ride matches that code', field: 'joinCode' })
   if (ride.status === 'ended') return res.status(409).json({ error: 'That ride has already finished' })
 
-  db.transaction(() => {
-    db.prepare('INSERT OR IGNORE INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?)')
+  await db.transaction(async (tx) => {
+    await tx.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING')
       .run(ride.id, req.user.id, 'rider', now())
-    const group = db.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
+    const group = await tx.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
     if (group) {
-      db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?)')
+      await tx.prepare('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
         .run(group.id, req.user.id, now())
     }
   })()
 
-  res.json({ ride: serializeRide(db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id), req.user.id) })
+  const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id)
+  res.json({ ride: await serializeRide(saved, req.user.id) })
 })
 
-function loadRide(req, res, next) {
-  const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(req.params.id)
+async function loadRide(req, res, next) {
+  const ride = await db.prepare('SELECT * FROM rides WHERE id = ?').get(req.params.id)
   if (!ride) return res.status(404).json({ error: 'Ride not found' })
-  const member = db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?').get(ride.id, req.user.id)
+  const member = await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?').get(ride.id, req.user.id)
   if (!member && ride.visibility !== 'public') return res.status(404).json({ error: 'Ride not found' })
   req.ride = ride
   next()
 }
 
-rideRoutes.get('/:id', loadRide, (req, res) => res.json({ ride: serializeRide(req.ride, req.user.id) }))
+rideRoutes.get('/:id', loadRide, async (req, res) => res.json({ ride: await serializeRide(req.ride, req.user.id) }))
 
-rideRoutes.patch('/:id', loadRide, (req, res) => {
+rideRoutes.patch('/:id', loadRide, async (req, res) => {
   if (req.ride.leader_id !== req.user.id && req.ride.created_by !== req.user.id) {
     return res.status(403).json({ error: 'Only the ride leader can change this ride' })
   }
   const b = req.body ?? {}
   const status = ['live', 'paused', 'ended'].includes(b.status) ? b.status : req.ride.status
-  db.prepare(
-    `UPDATE rides SET status=?, distance_km=?, rating=?, notes=?, fuel_cost=?, leader_id=?, ended_at=?
-      WHERE id=?`,
+  await db.prepare(
+    `UPDATE rides SET status=?, distance_km=?, rating=?, notes=?, fuel_cost=?, leader_id=?, ended_at=? WHERE id=?`,
   ).run(
     status,
     b.distanceKm ?? req.ride.distance_km,
@@ -166,5 +175,6 @@ rideRoutes.patch('/:id', loadRide, (req, res) => {
     status === 'ended' ? (req.ride.ended_at ?? now()) : null,
     req.ride.id,
   )
-  res.json({ ride: serializeRide(db.prepare('SELECT * FROM rides WHERE id = ?').get(req.ride.id), req.user.id) })
+  const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(req.ride.id)
+  res.json({ ride: await serializeRide(saved, req.user.id) })
 })

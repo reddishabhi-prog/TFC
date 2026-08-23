@@ -20,8 +20,8 @@ export function signToken(user) {
   return jwt.sign({ sub: user.id }, SECRET, { expiresIn: TOKEN_TTL })
 }
 
-export function findOrCreateUserByPhone(phone, name) {
-  const existing = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
+export async function findOrCreateUserByPhone(phone, name) {
+  const existing = await db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
   if (existing) return existing
   const user = {
     id: uid('usr'),
@@ -30,10 +30,9 @@ export function findOrCreateUserByPhone(phone, name) {
     avatar_color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
     created_at: now(),
   }
-  db.prepare(
-    `INSERT INTO users (id, name, phone, avatar_color, created_at)
-     VALUES (@id, @name, @phone, @avatar_color, @created_at)`,
-  ).run(user)
+  await db.prepare(
+    `INSERT INTO users (id, name, phone, avatar_color, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(user.id, user.name, user.phone, user.avatar_color, user.created_at)
   return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)
 }
 
@@ -55,13 +54,13 @@ export function publicUser(row) {
   }
 }
 
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ error: 'Sign in to continue' })
   try {
     const { sub } = jwt.verify(token, SECRET)
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(sub)
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(sub)
     if (!user) return res.status(401).json({ error: 'Session no longer valid' })
     req.user = user
     next()

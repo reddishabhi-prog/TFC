@@ -1,17 +1,102 @@
-import Database from 'better-sqlite3'
-import { mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import pg from 'pg'
 
-const DB_PATH = process.env.SLIPSTREAM_DB || resolve(process.cwd(), 'data/slipstream.db')
-mkdirSync(dirname(DB_PATH), { recursive: true })
+const { Pool } = pg
 
-export const db = new Database(DB_PATH)
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
+// A single pool per process. On Vercel each serverless invocation may reuse a
+// warm container, so this is created once at module load and reused across
+// calls within that container rather than per-request.
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Neon/Vercel Postgres require TLS; rejectUnauthorized:false matches their
+  // documented connection recipe for serverless clients.
+  ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
+  max: process.env.VERCEL ? 1 : 10, // one connection per serverless instance is the safe default
+})
 
-// Schema is declarative and idempotent — safe to run on every boot. Money is
-// stored in paise (integer) so splitting never accumulates float drift.
-db.exec(`
+/**
+ * A thin shim over `pg` shaped like better-sqlite3's synchronous API
+ * (`db.prepare(sql).get/all/run(...args)`), so route files keep the same
+ * calling convention and only need `await` added at each call site — the SQL
+ * itself is untouched except for `?` placeholders, rewritten to Postgres's
+ * `$1, $2, ...` here rather than in every query string.
+ */
+function toPg(sql) {
+  let i = 0
+  return sql.replace(/\?/g, () => `$${++i}`)
+}
+
+class Statement {
+  constructor(sql) {
+    this.sql = toPg(sql)
+  }
+  async get(...args) {
+    const { rows } = await pool.query(this.sql, args)
+    return rows[0]
+  }
+  async all(...args) {
+    const { rows } = await pool.query(this.sql, args)
+    return rows
+  }
+  async run(...args) {
+    const res = await pool.query(this.sql, args)
+    return { changes: res.rowCount }
+  }
+}
+
+export const db = {
+  prepare(sql) {
+    return new Statement(sql)
+  },
+  async exec(sql) {
+    await pool.query(sql)
+  },
+  /**
+   * better-sqlite3's `db.transaction(fn)` returns a synchronous function that
+   * runs `fn` atomically. Postgres transactions are inherently async, so this
+   * returns an async function instead — every call site does
+   * `await db.transaction(fn)(...)`, one extra `await`, same shape otherwise.
+   */
+  transaction(fn) {
+    return async (...args) => {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const scoped = {
+          prepare(sql) {
+            const stmt = new Statement(sql)
+            return {
+              get: (...a) => client.query(stmt.sql, a).then((r) => r.rows[0]),
+              all: (...a) => client.query(stmt.sql, a).then((r) => r.rows),
+              run: (...a) => client.query(stmt.sql, a).then((r) => ({ changes: r.rowCount })),
+            }
+          },
+        }
+        const result = await fn(scoped, ...args)
+        await client.query('COMMIT')
+        return result
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      } finally {
+        client.release()
+      }
+    }
+  },
+}
+
+export function uid(prefix = '') {
+  const s = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+  return prefix ? `${prefix}_${s}` : s
+}
+
+export const now = () => Date.now()
+
+/** Schema is declarative and idempotent — safe to run on every cold start.
+ *  Money is stored in paise (integer/bigint) so splitting never accumulates
+ *  float drift. Timestamps are epoch-ms bigints to match the app's existing
+ *  `Date.now()`-based format used throughout the client. */
+export async function migrate() {
+  await pool.query(`
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
@@ -23,7 +108,7 @@ CREATE TABLE IF NOT EXISTS users (
   medical_notes TEXT,
   emergency_name   TEXT,
   emergency_phone  TEXT,
-  created_at    INTEGER NOT NULL
+  created_at    BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rides (
@@ -32,7 +117,7 @@ CREATE TABLE IF NOT EXISTS rides (
   description  TEXT,
   origin       TEXT,
   destination  TEXT,
-  starts_at    INTEGER,
+  starts_at    BIGINT,
   duration_hrs REAL,
   visibility   TEXT NOT NULL DEFAULT 'private',
   status       TEXT NOT NULL DEFAULT 'planned',
@@ -43,15 +128,16 @@ CREATE TABLE IF NOT EXISTS rides (
   rating       INTEGER,
   notes        TEXT,
   fuel_cost    INTEGER,
-  created_at   INTEGER NOT NULL,
-  ended_at     INTEGER
+  created_at   BIGINT NOT NULL,
+  ended_at     BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS ride_members (
   ride_id   TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
   user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role      TEXT NOT NULL DEFAULT 'rider',
-  joined_at INTEGER NOT NULL,
+  joined_at BIGINT NOT NULL,
+  seq       SERIAL,
   PRIMARY KEY (ride_id, user_id)
 );
 
@@ -60,14 +146,15 @@ CREATE TABLE IF NOT EXISTS groups (
   name        TEXT NOT NULL,
   ride_id     TEXT REFERENCES rides(id) ON DELETE CASCADE,
   created_by  TEXT NOT NULL REFERENCES users(id),
-  settled_at  INTEGER,
-  created_at  INTEGER NOT NULL
+  settled_at  BIGINT,
+  created_at  BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS group_members (
   group_id  TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
   user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  joined_at INTEGER NOT NULL,
+  joined_at BIGINT NOT NULL,
+  seq       SERIAL,
   PRIMARY KEY (group_id, user_id)
 );
 
@@ -79,14 +166,11 @@ CREATE TABLE IF NOT EXISTS expenses (
   amount      INTEGER NOT NULL,
   paid_by     TEXT NOT NULL REFERENCES users(id),
   created_by  TEXT NOT NULL REFERENCES users(id),
-  spent_at    INTEGER NOT NULL,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER
+  spent_at    BIGINT NOT NULL,
+  created_at  BIGINT NOT NULL,
+  updated_at  BIGINT
 );
 
--- One row per participant per expense. Storing the resolved share (rather than
--- recomputing from a split rule) keeps historical splits stable when a group's
--- membership later changes.
 CREATE TABLE IF NOT EXISTS expense_shares (
   expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -100,7 +184,7 @@ CREATE TABLE IF NOT EXISTS settlements (
   from_user  TEXT NOT NULL REFERENCES users(id),
   to_user    TEXT NOT NULL REFERENCES users(id),
   amount     INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -109,7 +193,7 @@ CREATE TABLE IF NOT EXISTS messages (
   group_id   TEXT REFERENCES groups(id) ON DELETE CASCADE,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   body       TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS vehicles (
@@ -120,10 +204,10 @@ CREATE TABLE IF NOT EXISTS vehicles (
   model         TEXT,
   reg_no        TEXT,
   odometer_km   INTEGER,
-  insurance_due INTEGER,
-  puc_due       INTEGER,
-  service_due   INTEGER,
-  created_at    INTEGER NOT NULL
+  insurance_due BIGINT,
+  puc_due       BIGINT,
+  service_due   BIGINT,
+  created_at    BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -132,8 +216,17 @@ CREATE TABLE IF NOT EXISTS notifications (
   kind       TEXT NOT NULL DEFAULT 'system',
   title      TEXT NOT NULL,
   body       TEXT,
-  read_at    INTEGER,
-  created_at INTEGER NOT NULL
+  read_at    BIGINT,
+  created_at BIGINT NOT NULL
+);
+
+-- OTPs used to live in an in-memory Map. Serverless has no shared memory
+-- across invocations, so they now live here with a real expiry column.
+CREATE TABLE IF NOT EXISTS otps (
+  phone      TEXT PRIMARY KEY,
+  code       TEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_ride_members_user ON ride_members(user_id);
@@ -143,10 +236,4 @@ CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
 `)
-
-export function uid(prefix = '') {
-  const s = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-  return prefix ? `${prefix}_${s}` : s
 }
-
-export const now = () => Date.now()

@@ -6,7 +6,7 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
   expect: { timeout: 7_000 },
-  fullyParallel: false,   // one shared SQLite file; parallel writes would race
+  fullyParallel: false,   // one shared test database; parallel writes would race
   workers: 1,
   retries: 0,
   reporter: [['list']],
@@ -21,12 +21,15 @@ export default defineConfig({
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || '/opt/pw-browsers/chromium',
     },
   },
-  // Serves the built SPA and the API from one origin, against a throwaway DB.
+// Serves the built SPA and the API from one origin, against a throwaway DB.
   webServer: {
     command: `node server/index.js`,
     port: PORT,
     reuseExistingServer: false,
-    env: { PORT: String(PORT), SLIPSTREAM_DB: 'data/test.db' },
+    env: {
+      PORT: String(PORT),
+      DATABASE_URL: process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/slipstream_test',
+    },
     stdout: 'ignore',
   },
 })
