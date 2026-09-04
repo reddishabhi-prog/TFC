@@ -5,6 +5,8 @@ import { Button, ConfirmDialog, Avatar, Pill } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { RideMap } from '../components/RideMap'
 import { RideMemories } from '../components/RideMemories'
+import { RideChecklist } from '../components/RideChecklist'
+import { RideShareCard } from '../components/RideShareCard'
 import { dateTimeLabel } from '../utils/format'
 
 // How often we (a) read the device's own GPS and push it up, and (b) poll for
@@ -22,6 +24,7 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const [copied, setCopied] = useState(false)
   const [sos, setSos] = useState('idle')
   const [view, setView] = useState('map')
+  const [shareCard, setShareCard] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -110,6 +113,7 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
 
       <div className="segmented ride-view-toggle">
         <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>Map</button>
+        <button className={view === 'checklist' ? 'on' : ''} onClick={() => setView('checklist')}>Checklist</button>
         <button className={view === 'memories' ? 'on' : ''} onClick={() => setView('memories')}>Memories</button>
       </div>
 
@@ -133,6 +137,8 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
               : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
           )}
         </div>
+      ) : view === 'checklist' ? (
+        <RideChecklist ride={ride} />
       ) : (
         <RideMemories ride={ride} onRideUpdated={setRide} />
       )}
@@ -144,6 +150,13 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
             <span className="join-code-hint">{copied ? 'Copied ✓' : 'Tap to copy · share with riders'}</span>
             <Icon name="copy" size={17} />
           </button>
+
+          {ended && (
+            <Button variant="primary" size="lg" block icon="trophy"
+                    style={{ marginTop: 'var(--sp-3)' }} onClick={() => setShareCard(true)}>
+              Share your ride card
+            </Button>
+          )}
 
           <div className="row" style={{ gap: 8, marginTop: 'var(--sp-3)' }}>
             <Button block icon="split" onClick={() => onOpenSplit(ride.groupId)}>Split</Button>
@@ -187,7 +200,10 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         cancelLabel="Keep riding"
         busy={busy}
         onCancel={() => setConfirm(null)}
-        onConfirm={() => update({ status: 'ended' }, 'Ride ended')}
+        onConfirm={async () => {
+          await update({ status: 'ended' }, 'Ride ended')
+          setShareCard(true) // peak moment to share is right when it wraps up
+        }}
       />
       <ConfirmDialog
         open={confirm?.kind === 'sos'}
@@ -198,6 +214,8 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         onCancel={() => setConfirm(null)}
         onConfirm={() => { setSos('sent'); setConfirm(null); toast.error('SOS broadcast to your group') }}
       />
+
+      {shareCard && <RideShareCard ride={ride} onClose={() => setShareCard(false)} />}
     </div>
   )
 }

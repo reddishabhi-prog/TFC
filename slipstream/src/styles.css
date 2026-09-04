@@ -817,6 +817,89 @@ button.hero-card { display: block; width: 100%; text-align: left; }
 .ride-view-toggle { margin: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
 
 /* ==========================================================================
+   Ride checklist
+   ========================================================================== */
+
+.checklist-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding-right: var(--sp-2);
+}
+.checklist-tick {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3);
+  text-align: left; min-height: var(--tap-min);
+}
+.checklist-box {
+  width: 22px; height: 22px; border-radius: var(--r-xs); flex-shrink: 0;
+  border: 1.5px solid var(--border-strong);
+  display: grid; place-items: center; color: #fff;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+.checklist-label { font-size: var(--fs-sm); color: var(--text-body); }
+.checklist-row.checked .checklist-box { background: var(--success-500); border-color: var(--success-500); }
+.checklist-row.checked .checklist-label { color: var(--text-muted); text-decoration: line-through; }
+.checklist-remove { color: var(--text-muted); padding: var(--sp-2); flex-shrink: 0; }
+
+.readiness-track {
+  display: block; height: 4px; margin-top: 6px;
+  background: var(--surface-sunken); border-radius: var(--r-full); overflow: hidden;
+}
+.readiness-fill { display: block; height: 100%; background: var(--brand-500); border-radius: var(--r-full); }
+.readiness-fill.done { background: var(--success-500); }
+
+/* ==========================================================================
+   Milestones & badges
+   ========================================================================== */
+
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.stat-tile {
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md); padding: var(--sp-3);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.stat-value { font-size: var(--fs-h2); font-weight: var(--fw-heavy); color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.stat-label { font-size: var(--fs-2xs); color: var(--text-muted); font-weight: var(--fw-strong); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+
+.badge-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); }
+.badge {
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md); padding: var(--sp-3) var(--sp-2);
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  opacity: 0.55;
+}
+.badge.earned { opacity: 1; border-color: var(--brand-200); background: var(--brand-50); }
+.badge-emoji { font-size: 24px; line-height: 1; filter: grayscale(1); }
+.badge.earned .badge-emoji { filter: none; }
+.badge-name { font-size: var(--fs-2xs); font-weight: var(--fw-heavy); color: var(--text-strong); line-height: var(--lh-snug); }
+.badge-state { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.badge.earned .badge-state { color: var(--brand-700); font-weight: var(--fw-strong); }
+.badge-track {
+  width: 100%; height: 3px; background: var(--surface-sunken);
+  border-radius: var(--r-full); overflow: hidden;
+}
+.badge-fill { display: block; height: 100%; background: var(--brand-400); }
+
+/* ==========================================================================
+   Ride share card
+   ========================================================================== */
+
+.share-card-preview {
+  position: relative; margin-bottom: var(--sp-4);
+  border-radius: var(--r-lg); overflow: hidden; background: #1a0812;
+  display: grid; place-items: center; min-height: 200px;
+}
+.share-card-canvas { width: 100%; height: auto; display: block; }
+.share-card-loading {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: #a29a94; font-size: var(--fs-sm); font-weight: var(--fw-strong);
+  background: #1a0812;
+}
+
+/* ==========================================================================
    Ride memories — a dark media surface regardless of app theme, matching
    the map's own always-dark treatment so the two tabs read as one "ride
    view" rather than the feed jarringly flipping white in light mode.

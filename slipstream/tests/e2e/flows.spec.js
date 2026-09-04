@@ -63,6 +63,35 @@ test.describe('Rides', () => {
   })
 })
 
+test.describe('Checklist', () => {
+  test('the leader adds an item, ticks it, and readiness updates', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'List Maker' })
+    await startRide(page, { name: 'Ghat Prep', destination: 'Coorg' })
+
+    await page.locator('.ride-view-toggle').getByRole('button', { name: 'Checklist' }).click()
+    await expect(page.getByText('No checklist yet')).toBeVisible()
+
+    await page.getByPlaceholder('Helmet, full tank, rain gear…').fill('Helmet')
+    await page.getByRole('button', { name: 'Add item' }).click()
+    await expect(page.getByText('Your checklist · 0/1')).toBeVisible()
+    await expect(page.locator('.list-row').getByText('0/1')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Check Helmet' }).click()
+    await expect(page.getByText('Your checklist · 1/1')).toBeVisible()
+    await expect(page.locator('.list-row').getByText('Ready')).toBeVisible()
+  })
+})
+
+test.describe('Milestones', () => {
+  test('a new rider sees locked badges with progress', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Fresh Rider' })
+    await page.locator('.tab-bar').getByRole('button', { name: 'Me', exact: true }).click()
+    await expect(page.getByText('Milestones · 0/9')).toBeVisible()
+    await expect(page.locator('.badge', { hasText: 'First Ride' })).toBeVisible()
+    await expect(page.locator('.badge.earned')).toHaveCount(0)
+  })
+})
+
 test.describe('Memories', () => {
   // Actually uploading a file needs a live Vercel Blob token this suite has
   // no access to, so this covers everything reachable without one: the

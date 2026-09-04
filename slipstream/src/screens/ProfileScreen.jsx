@@ -3,6 +3,7 @@ import { Api } from '../services/api'
 import { useAuth, useTheme, useToast } from '../context/AppContext'
 import { Button, Field, TextInput, Segmented, ConfirmDialog, Avatar } from '../components/ui'
 import { Icon } from '../components/Icon'
+import { RiderBadges } from '../components/RiderBadges'
 import { validateName, validateEmail, validatePhone, digitsOnly } from '../utils/validate'
 
 const BLOOD_GROUPS = ['', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
@@ -73,6 +74,8 @@ export function ProfileScreen({ onNavigate }) {
             <div className="caption">{user.phone ? `+91 ${user.phone}` : user.email}</div>
           </div>
         </div>
+
+        <RiderBadges />
 
         <div className="section">
           <div className="section-title">Your details</div>

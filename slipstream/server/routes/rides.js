@@ -10,6 +10,16 @@ const MEMORY_CONTENT_TYPES = [
   'video/mp4', 'video/quicktime', 'video/webm',
 ]
 const MEMORY_MAX_BYTES = 25 * 1024 * 1024
+const MIN_TRACK_METRES = 25
+
+/** Equirectangular approximation — plenty accurate at the scale of "did this
+ *  bike move 25 metres", and far cheaper than haversine per location ping. */
+function metresBetween(lat1, lng1, lat2, lng2) {
+  const toRad = Math.PI / 180
+  const x = (lng2 - lng1) * toRad * Math.cos(((lat1 + lat2) / 2) * toRad)
+  const y = (lat2 - lat1) * toRad
+  return Math.sqrt(x * x + y * y) * 6371000
+}
 
 export const rideRoutes = Router()
 rideRoutes.use(requireAuth)
@@ -230,7 +240,94 @@ rideRoutes.post('/:id/location', loadRide, async (req, res) => {
     'UPDATE ride_members SET lat = ?, lng = ?, location_updated_at = ? WHERE ride_id = ? AND user_id = ?',
   ).run(lat, lng, now(), req.ride.id, req.user.id)
   if (!changes) return res.status(403).json({ error: 'Only ride members can share their location' })
+
+  // Append a breadcrumb only once the rider has actually moved, so a bike
+  // parked at a chai stop doesn't write a point every 8 seconds all afternoon.
+  const last = await db.prepare(
+    'SELECT lat, lng FROM ride_track WHERE ride_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+  ).get(req.ride.id, req.user.id)
+  if (!last || metresBetween(last.lat, last.lng, lat, lng) >= MIN_TRACK_METRES) {
+    await db.prepare('INSERT INTO ride_track (ride_id, user_id, lat, lng, created_at) VALUES (?,?,?,?,?)')
+      .run(req.ride.id, req.user.id, lat, lng, now())
+  }
   res.status(204).end()
+})
+
+// The finished ride's shape, for the end-of-ride share card: the leader's
+// breadcrumbs if they have any, otherwise whoever tracked the most.
+rideRoutes.get('/:id/track', loadRide, async (req, res) => {
+  const best = await db.prepare(
+    `SELECT user_id AS "userId", COUNT(*)::int AS points FROM ride_track
+      WHERE ride_id = ? GROUP BY user_id ORDER BY (user_id = ?) DESC, points DESC LIMIT 1`,
+  ).get(req.ride.id, req.ride.leader_id)
+  if (!best) return res.json({ points: [] })
+
+  const points = await db.prepare(
+    'SELECT lat, lng FROM ride_track WHERE ride_id = ? AND user_id = ? ORDER BY created_at ASC',
+  ).all(req.ride.id, best.userId)
+  res.json({ points })
+})
+
+rideRoutes.get('/:id/checklist', loadRide, async (req, res) => {
+  const items = await db.prepare('SELECT id, label FROM checklist_items WHERE ride_id = ? ORDER BY seq').all(req.ride.id)
+  const myChecks = (await db.prepare(
+    `SELECT cc.item_id AS "itemId" FROM checklist_checks cc
+       JOIN checklist_items ci ON ci.id = cc.item_id
+      WHERE ci.ride_id = ? AND cc.user_id = ?`,
+  ).all(req.ride.id, req.user.id)).map((r) => r.itemId)
+
+  const readiness = await db.prepare(
+    `SELECT u.id AS "userId", u.name, u.avatar_color AS "avatarColor",
+            (SELECT COUNT(*)::int FROM checklist_checks cc
+               JOIN checklist_items ci ON ci.id = cc.item_id
+              WHERE ci.ride_id = ? AND cc.user_id = rm.user_id) AS "checkedCount"
+       FROM ride_members rm JOIN users u ON u.id = rm.user_id
+      WHERE rm.ride_id = ? ORDER BY rm.seq`,
+  ).all(req.ride.id, req.ride.id)
+
+  res.json({ items, myChecks, readiness })
+})
+
+rideRoutes.post('/:id/checklist/items', loadRide, async (req, res) => {
+  if (req.ride.leader_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the ride leader can edit the checklist' })
+  }
+  const label = String(req.body?.label ?? '').trim()
+  if (!label) return res.status(400).json({ error: 'Item text is required', field: 'label' })
+  if (label.length > 80) return res.status(400).json({ error: 'Keep it under 80 characters', field: 'label' })
+
+  const id = uid('chk')
+  await db.prepare('INSERT INTO checklist_items (id, ride_id, label, created_at) VALUES (?,?,?,?)')
+    .run(id, req.ride.id, label, now())
+  res.status(201).json({ item: { id, label } })
+})
+
+rideRoutes.delete('/:id/checklist/items/:itemId', loadRide, async (req, res) => {
+  if (req.ride.leader_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the ride leader can edit the checklist' })
+  }
+  await db.prepare('DELETE FROM checklist_items WHERE id = ? AND ride_id = ?').run(req.params.itemId, req.ride.id)
+  res.status(204).end()
+})
+
+rideRoutes.post('/:id/checklist/items/:itemId/check', loadRide, async (req, res) => {
+  const item = await db.prepare('SELECT 1 FROM checklist_items WHERE id = ? AND ride_id = ?')
+    .get(req.params.itemId, req.ride.id)
+  if (!item) return res.status(404).json({ error: 'Checklist item not found' })
+  const member = await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?')
+    .get(req.ride.id, req.user.id)
+  if (!member) return res.status(403).json({ error: 'Only ride members can tick the checklist' })
+
+  const existing = await db.prepare('SELECT 1 FROM checklist_checks WHERE item_id = ? AND user_id = ?')
+    .get(req.params.itemId, req.user.id)
+  if (existing) {
+    await db.prepare('DELETE FROM checklist_checks WHERE item_id = ? AND user_id = ?')
+      .run(req.params.itemId, req.user.id)
+  } else {
+    await db.prepare('INSERT INTO checklist_checks (item_id, user_id, checked_at) VALUES (?,?,?)')
+      .run(req.params.itemId, req.user.id, now())
+  }
+  res.json({ checked: !existing })
 })
 
 async function memoryCountFor(rideId, userId) {

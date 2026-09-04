@@ -81,6 +81,15 @@ export const Api = {
   updateRide: (id, payload) => api.patch(`/rides/${id}`, payload),
   updateLocation: (id, payload) => api.post(`/rides/${id}/location`, payload),
 
+  rideTrack: (rideId) => api.get(`/rides/${rideId}/track`),
+
+  checklist: (rideId) => api.get(`/rides/${rideId}/checklist`),
+  addChecklistItem: (rideId, payload) => api.post(`/rides/${rideId}/checklist/items`, payload),
+  deleteChecklistItem: (rideId, itemId) => api.del(`/rides/${rideId}/checklist/items/${itemId}`),
+  toggleChecklistItem: (rideId, itemId) => api.post(`/rides/${rideId}/checklist/items/${itemId}/check`),
+
+  badges: () => api.get('/users/me/badges'),
+
   memories: (rideId) => api.get(`/rides/${rideId}/memories`),
   createMemory: (rideId, payload) => api.post(`/rides/${rideId}/memories`, payload),
   likeMemory: (rideId, memoryId) => api.post(`/rides/${rideId}/memories/${memoryId}/like`),

@@ -1,10 +1,16 @@
 import { Router } from 'express'
 import { db, uid, now } from '../lib/db.js'
 import { requireAuth, publicUser } from '../lib/auth.js'
+import { riderStats, gradeBadges } from '../lib/badges.js'
 import { validatePhone, validateEmail, validateName, PHONE_RE } from '../../src/utils/validate.js'
 
 export const userRoutes = Router()
 userRoutes.use(requireAuth)
+
+userRoutes.get('/me/badges', async (req, res) => {
+  const stats = await riderStats(req.user.id)
+  res.json({ stats, badges: gradeBadges(stats) })
+})
 
 /**
  * Rider lookup for invites. Searching by full phone number is exact; searching
