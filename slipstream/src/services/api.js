@@ -14,7 +14,7 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
     this.field = field
-    this.errors = errors || (field ? { [field]: message } : {})
+    this.errors = errors || (field ? { [field]: message } : undefined)
   }
 }
 
