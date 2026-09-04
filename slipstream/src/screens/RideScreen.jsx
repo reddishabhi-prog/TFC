@@ -137,45 +137,47 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         <RideMemories ride={ride} onRideUpdated={setRide} />
       )}
 
-      <div className="ride-sheet">
-        <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>
-          <span className="join-code-value mono">{ride.joinCode}</span>
-          <span className="join-code-hint">{copied ? 'Copied ✓' : 'Tap to copy · share with riders'}</span>
-          <Icon name="copy" size={17} />
-        </button>
+      {view === 'map' && (
+        <div className="ride-sheet">
+          <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>
+            <span className="join-code-value mono">{ride.joinCode}</span>
+            <span className="join-code-hint">{copied ? 'Copied ✓' : 'Tap to copy · share with riders'}</span>
+            <Icon name="copy" size={17} />
+          </button>
 
-        <div className="row" style={{ gap: 8, marginTop: 'var(--sp-3)' }}>
-          <Button block icon="split" onClick={() => onOpenSplit(ride.groupId)}>Split</Button>
-          {!ended && (
-            <>
-              <Button block icon={ride.status === 'paused' ? 'play' : 'pause'} loading={busy}
-                      onClick={() => update({ status: ride.status === 'paused' ? 'live' : 'paused' })}>
-                {ride.status === 'paused' ? 'Resume' : 'Pause'}
-              </Button>
-              <Button variant="primary" block icon="stop"
-                      onClick={() => setConfirm({ kind: 'end' })}>End</Button>
-            </>
-          )}
-        </div>
+          <div className="row" style={{ gap: 8, marginTop: 'var(--sp-3)' }}>
+            <Button block icon="split" onClick={() => onOpenSplit(ride.groupId)}>Split</Button>
+            {!ended && (
+              <>
+                <Button block icon={ride.status === 'paused' ? 'play' : 'pause'} loading={busy}
+                        onClick={() => update({ status: ride.status === 'paused' ? 'live' : 'paused' })}>
+                  {ride.status === 'paused' ? 'Resume' : 'Pause'}
+                </Button>
+                <Button variant="primary" block icon="stop"
+                        onClick={() => setConfirm({ kind: 'end' })}>End</Button>
+              </>
+            )}
+          </div>
 
-        <div className="section" style={{ padding: 'var(--sp-5) 0 0' }}>
-          <div className="section-title">Riders</div>
-          <div className="stack" style={{ gap: 6 }}>
-            {ride.members.map((m) => (
-              <div className="list-row" key={m.id}>
-                <Avatar name={m.name} color={m.avatarColor} size="sm" />
-                <span className="grow">
-                  <span className="list-row-title">
-                    {m.name}{m.id === user.id ? ' (you)' : ''}
+          <div className="section" style={{ padding: 'var(--sp-5) 0 0' }}>
+            <div className="section-title">Riders</div>
+            <div className="stack" style={{ gap: 6 }}>
+              {ride.members.map((m) => (
+                <div className="list-row" key={m.id}>
+                  <Avatar name={m.name} color={m.avatarColor} size="sm" />
+                  <span className="grow">
+                    <span className="list-row-title">
+                      {m.name}{m.id === user.id ? ' (you)' : ''}
+                    </span>
+                    <span className="list-row-sub">{dateTimeLabel(ride.startsAt)}</span>
                   </span>
-                  <span className="list-row-sub">{dateTimeLabel(ride.startsAt)}</span>
-                </span>
-                {m.id === ride.leaderId && <Pill tone="brand">Leader</Pill>}
-              </div>
-            ))}
+                  {m.id === ride.leaderId && <Pill tone="brand">Leader</Pill>}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <ConfirmDialog
         open={confirm?.kind === 'end'}
