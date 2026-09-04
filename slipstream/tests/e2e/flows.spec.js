@@ -37,8 +37,11 @@ test.describe('Rides', () => {
     await signUp(page, { phone: freshPhone(), name: 'Ride Maker' })
     await startRide(page, { name: 'Coastal Sunrise Run', destination: 'Gokarna' })
     await expect(page.locator('.join-code-value')).toHaveText(/^[A-Z0-9]{6}$/)
-    await expect(page.locator('.road-svg')).toBeVisible()
-    await expect(page.locator('.rider-marker')).toHaveCount(1)
+    // The real Leaflet map (replacing the old fake SVG route) mounts into this
+    // container — checked via the class Leaflet itself adds, not the tile
+    // layer, since tile images depend on network access to OSM and marker
+    // timing depends on the device's geolocation permission and poll cycle.
+    await expect(page.locator('.ride-map-canvas.leaflet-container')).toBeVisible()
   })
 
   test('ending a ride asks for confirmation first', async ({ page }) => {

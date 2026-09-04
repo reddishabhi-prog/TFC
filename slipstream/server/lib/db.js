@@ -138,8 +138,17 @@ CREATE TABLE IF NOT EXISTS ride_members (
   role      TEXT NOT NULL DEFAULT 'rider',
   joined_at BIGINT NOT NULL,
   seq       SERIAL,
+  lat                 DOUBLE PRECISION,
+  lng                 DOUBLE PRECISION,
+  location_updated_at BIGINT,
   PRIMARY KEY (ride_id, user_id)
 );
+
+-- Added after the original table shipped, so existing deployments need the
+-- columns backfilled onto whatever ride_members already has.
+ALTER TABLE ride_members ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE ride_members ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+ALTER TABLE ride_members ADD COLUMN IF NOT EXISTS location_updated_at BIGINT;
 
 CREATE TABLE IF NOT EXISTS groups (
   id          TEXT PRIMARY KEY,

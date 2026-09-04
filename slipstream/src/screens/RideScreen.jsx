@@ -1,52 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Api } from '../services/api'
 import { useAuth, useToast } from '../context/AppContext'
 import { Button, ConfirmDialog, Avatar, Pill } from '../components/ui'
 import { Icon } from '../components/Icon'
+import { RideMap } from '../components/RideMap'
 import { dateTimeLabel } from '../utils/format'
 
-// One shared bezier every rider travels along, so the map reads as a convoy on
-// a single road rather than scattered dots.
-const ROUTE = { p0: [12, 86], c1: [88, 72], c2: [10, 34], p3: [88, 10] }
-const ROUTE_D = `M ${ROUTE.p0[0]} ${ROUTE.p0[1]} C ${ROUTE.c1[0]} ${ROUTE.c1[1]}, ${ROUTE.c2[0]} ${ROUTE.c2[1]}, ${ROUTE.p3[0]} ${ROUTE.p3[1]}`
-
-function routePoint(progress) {
-  const t = Math.min(1, Math.max(0, progress / 100))
-  const u = 1 - t
-  const { p0, c1, c2, p3 } = ROUTE
-  return [
-    u ** 3 * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t ** 3 * p3[0],
-    u ** 3 * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t ** 3 * p3[1],
-  ]
-}
-function routeTangent(progress) {
-  const t = Math.min(1, Math.max(0, progress / 100))
-  const u = 1 - t
-  const { p0, c1, c2, p3 } = ROUTE
-  const dx = 3 * u * u * (c1[0] - p0[0]) + 6 * u * t * (c2[0] - c1[0]) + 3 * t * t * (p3[0] - c2[0])
-  const dy = 3 * u * u * (c1[1] - p0[1]) + 6 * u * t * (c2[1] - c1[1]) + 3 * t * t * (p3[1] - c2[1])
-  const len = Math.hypot(dx, dy) || 1
-  return [dx / len, dy / len]
-}
-/**
- * Riders all start at 0% progress, so without an offset every marker lands on
- * the same point and only the last one drawn is visible. Fan them out
- * perpendicular to the road: lane 0 stays on the line, the rest alternate.
- */
-function laneOffset(lane) {
-  if (!lane) return 0
-  const step = Math.ceil(lane / 2)
-  return lane % 2 === 1 ? step : -step
-}
-function ridePoint(progress, lane) {
-  const [x, y] = routePoint(progress)
-  const [tx, ty] = routeTangent(progress)
-  const offset = laneOffset(lane) * 13
-  return [
-    Math.min(94, Math.max(6, x + -ty * offset)),
-    Math.min(94, Math.max(6, y + tx * offset)),
-  ]
-}
+// How often we (a) read the device's own GPS and push it up, and (b) poll for
+// everyone else's latest position. A few riders' worth of traffic doesn't
+// need a websocket — polling this slowly is plenty smooth for a moving bike.
+const LOCATION_PUSH_MS = 8000
+const LOCATION_POLL_MS = 6000
 
 export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const { user } = useAuth()
@@ -59,11 +23,43 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
 
   useEffect(() => {
     let cancelled = false
-    Api.rides()
-      .then(({ rides }) => { if (!cancelled) setRide(rides.find((r) => r.id === rideId) ?? null) })
+    Api.ride(rideId)
+      .then(({ ride: r }) => { if (!cancelled) setRide(r) })
       .catch((e) => { if (!cancelled) toast.error(e) })
     return () => { cancelled = true }
   }, [rideId, toast])
+
+  // Poll everyone's latest position while the ride is on screen. Cheap and
+  // simple beats a websocket for a handful of riders checking a map.
+  useEffect(() => {
+    if (!ride || ride.status === 'ended') return
+    const timer = setInterval(() => {
+      Api.ride(rideId).then(({ ride: r }) => setRide(r)).catch(() => { /* skip a beat, try again next tick */ })
+    }, LOCATION_POLL_MS)
+    return () => clearInterval(timer)
+  }, [rideId, ride?.status])
+
+  // Share this device's own GPS position while the ride is live. Paused/ended
+  // rides, or a rider who never granted location permission, simply show
+  // everyone else without a pin of their own.
+  const deniedRef = useRef(false)
+  useEffect(() => {
+    if (!ride || ride.status !== 'live' || !('geolocation' in navigator)) return
+    deniedRef.current = false
+    function pushLocation() {
+      if (deniedRef.current) return
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          Api.updateLocation(rideId, { lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {})
+        },
+        (err) => { if (err.code === err.PERMISSION_DENIED) deniedRef.current = true },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 },
+      )
+    }
+    pushLocation()
+    const timer = setInterval(pushLocation, LOCATION_PUSH_MS)
+    return () => clearInterval(timer)
+  }, [rideId, ride?.status])
 
   async function update(patch, message) {
     setBusy(true)
@@ -111,28 +107,17 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       </header>
 
       <div className="ride-map">
-        <svg className="road-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <path d={ROUTE_D} fill="none" stroke="#3a1f26" strokeWidth="7" strokeLinecap="round" />
-          <path d={ROUTE_D} fill="none" stroke="#ffb84d" strokeWidth="1.2" strokeDasharray="3 2.4"
-                strokeLinecap="round" opacity="0.9" />
-          <circle cx={ROUTE.p0[0]} cy={ROUTE.p0[1]} r="2" fill="#ffb84d" />
-          <circle cx={ROUTE.p3[0]} cy={ROUTE.p3[1]} r="2.6" fill="none" stroke="#ffb84d" strokeWidth="1" />
-        </svg>
-        <div className="route-flag start" style={{ left: `${ROUTE.p0[0]}%`, top: `${ROUTE.p0[1]}%` }}>
-          {ride.origin || 'Start'}
-        </div>
-        <div className="route-flag" style={{ left: `${ROUTE.p3[0]}%`, top: `${ROUTE.p3[1]}%` }}>
-          🏁 {ride.destination || 'Finish'}
-        </div>
+        <RideMap members={ride.members} youId={user.id} />
 
-        {ride.members.map((m, i) => {
-          const [x, y] = ridePoint(0, i)
-          return (
-            <div className="rider-marker" key={m.id} style={{ left: `${x}%`, top: `${y}%` }}>
-              <Avatar name={m.name} color={m.id === user.id ? '#ffb84d' : m.avatarColor} size="sm" />
-            </div>
-          )
-        })}
+        {(ride.origin || ride.destination) && (
+          <div className="route-banner">
+            {ride.origin || 'Start'} <Icon name="arrowLeft" size={12} style={{ transform: 'rotate(180deg)' }} /> {ride.destination || 'Finish'}
+          </div>
+        )}
+
+        {!ride.members.some((m) => typeof m.lat === 'number') && (
+          <div className="map-hint">Waiting for riders to share their location…</div>
+        )}
 
         {!ended && (
           sos === 'sent'

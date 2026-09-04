@@ -74,10 +74,12 @@ export const Api = {
   updateMe: (payload) => api.patch('/users/me', payload),
 
   rides: () => api.get('/rides'),
+  ride: (id) => api.get(`/rides/${id}`),
   publicRides: () => api.get('/rides/public'),
   createRide: (payload) => api.post('/rides', payload),
   joinRide: (joinCode) => api.post('/rides/join', { joinCode }),
   updateRide: (id, payload) => api.patch(`/rides/${id}`, payload),
+  updateLocation: (id, payload) => api.post(`/rides/${id}/location`, payload),
 
   groups: () => api.get('/groups'),
   group: (id) => api.get(`/groups/${id}`),

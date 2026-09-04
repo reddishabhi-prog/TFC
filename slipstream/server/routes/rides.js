@@ -18,13 +18,17 @@ async function freshJoinCode() {
 }
 
 async function serializeRide(ride, viewerId) {
-  const members = await db
+  const members = (await db
     .prepare(
-      `SELECT u.id, u.name, u.avatar_color AS "avatarColor", rm.role
+      `SELECT u.id, u.name, u.avatar_color AS "avatarColor", rm.role,
+              rm.lat, rm.lng, rm.location_updated_at AS "locationUpdatedAt"
          FROM ride_members rm JOIN users u ON u.id = rm.user_id
         WHERE rm.ride_id = ? ORDER BY rm.seq`,
     )
-    .all(ride.id)
+    .all(ride.id)).map((m) => ({
+    ...m,
+    locationUpdatedAt: m.locationUpdatedAt ? Number(m.locationUpdatedAt) : null,
+  }))
   const group = await db.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
   return {
     id: ride.id,
@@ -177,4 +181,20 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
   )
   const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(req.ride.id)
   res.json({ ride: await serializeRide(saved, req.user.id) })
+})
+
+// Riders push their own position every few seconds while a ride is live;
+// everyone else picks it up on their next GET /rides/:id poll. No
+// broadcast/socket layer needed for a few riders' worth of traffic.
+rideRoutes.post('/:id/location', loadRide, async (req, res) => {
+  const lat = Number(req.body?.lat)
+  const lng = Number(req.body?.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'lat/lng must be valid coordinates' })
+  }
+  const { changes } = await db.prepare(
+    'UPDATE ride_members SET lat = ?, lng = ?, location_updated_at = ? WHERE ride_id = ? AND user_id = ?',
+  ).run(lat, lng, now(), req.ride.id, req.user.id)
+  if (!changes) return res.status(403).json({ error: 'Only ride members can share their location' })
+  res.status(204).end()
 })
