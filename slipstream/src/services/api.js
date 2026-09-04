@@ -81,6 +81,14 @@ export const Api = {
   updateRide: (id, payload) => api.patch(`/rides/${id}`, payload),
   updateLocation: (id, payload) => api.post(`/rides/${id}/location`, payload),
 
+  memories: (rideId) => api.get(`/rides/${rideId}/memories`),
+  createMemory: (rideId, payload) => api.post(`/rides/${rideId}/memories`, payload),
+  likeMemory: (rideId, memoryId) => api.post(`/rides/${rideId}/memories/${memoryId}/like`),
+  deleteMemory: (rideId, memoryId) => api.del(`/rides/${rideId}/memories/${memoryId}`),
+  // Not a request — @vercel/blob's upload() calls this URL itself for the
+  // token handshake, so the component only needs the address, not a wrapper.
+  memoryUploadUrl: (rideId) => `${BASE}/rides/${rideId}/memories/blob-upload`,
+
   groups: () => api.get('/groups'),
   group: (id) => api.get(`/groups/${id}`),
   createGroup: (payload) => api.post('/groups', payload),

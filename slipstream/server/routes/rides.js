@@ -1,7 +1,15 @@
 import { Router } from 'express'
+import { del } from '@vercel/blob'
+import { handleUpload } from '@vercel/blob/client'
 import { db, uid, now } from '../lib/db.js'
 import { requireAuth } from '../lib/auth.js'
 import { validateName } from '../../src/utils/validate.js'
+
+const MEMORY_CONTENT_TYPES = [
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'video/mp4', 'video/quicktime', 'video/webm',
+]
+const MEMORY_MAX_BYTES = 25 * 1024 * 1024
 
 export const rideRoutes = Router()
 rideRoutes.use(requireAuth)
@@ -49,11 +57,33 @@ async function serializeRide(ride, viewerId) {
     fuelCost: ride.fuel_cost,
     createdAt: Number(ride.created_at),
     endedAt: ride.ended_at ? Number(ride.ended_at) : null,
+    memoryLimit: ride.memory_limit,
     members,
     isLeader: ride.leader_id === viewerId,
     groupId: group?.id ?? null,
   }
 }
+
+function mapMemoryRow(r) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    authorName: r.author_name,
+    authorColor: r.authorColor,
+    mediaUrl: r.media_url,
+    mediaType: r.media_type,
+    caption: r.caption,
+    createdAt: Number(r.created_at),
+    likeCount: r.likeCount,
+    likedByMe: r.likedByMe,
+  }
+}
+
+const MEMORY_ROW_SELECT = `
+  SELECT m.*, u.name AS author_name, u.avatar_color AS "authorColor",
+         (SELECT COUNT(*)::int FROM memory_likes WHERE memory_id = m.id) AS "likeCount",
+         EXISTS(SELECT 1 FROM memory_likes WHERE memory_id = m.id AND user_id = ?) AS "likedByMe"
+    FROM memories m JOIN users u ON u.id = m.user_id`
 
 rideRoutes.get('/', async (req, res) => {
   const rows = await db
@@ -167,8 +197,11 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
   }
   const b = req.body ?? {}
   const status = ['live', 'paused', 'ended'].includes(b.status) ? b.status : req.ride.status
+  const memoryLimit = Number.isFinite(Number(b.memoryLimit))
+    ? Math.min(50, Math.max(1, Math.round(Number(b.memoryLimit))))
+    : req.ride.memory_limit
   await db.prepare(
-    `UPDATE rides SET status=?, distance_km=?, rating=?, notes=?, fuel_cost=?, leader_id=?, ended_at=? WHERE id=?`,
+    `UPDATE rides SET status=?, distance_km=?, rating=?, notes=?, fuel_cost=?, leader_id=?, memory_limit=?, ended_at=? WHERE id=?`,
   ).run(
     status,
     b.distanceKm ?? req.ride.distance_km,
@@ -176,6 +209,7 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
     b.notes ?? req.ride.notes,
     b.fuelCost ?? req.ride.fuel_cost,
     b.leaderId ?? req.ride.leader_id,
+    memoryLimit,
     status === 'ended' ? (req.ride.ended_at ?? now()) : null,
     req.ride.id,
   )
@@ -197,4 +231,112 @@ rideRoutes.post('/:id/location', loadRide, async (req, res) => {
   ).run(lat, lng, now(), req.ride.id, req.user.id)
   if (!changes) return res.status(403).json({ error: 'Only ride members can share their location' })
   res.status(204).end()
+})
+
+async function memoryCountFor(rideId, userId) {
+  const { count } = await db.prepare(
+    'SELECT COUNT(*)::int AS count FROM memories WHERE ride_id = ? AND user_id = ?',
+  ).get(rideId, userId)
+  return count
+}
+
+rideRoutes.get('/:id/memories', loadRide, async (req, res) => {
+  const rows = await db.prepare(`${MEMORY_ROW_SELECT} WHERE m.ride_id = ? ORDER BY m.created_at DESC`)
+    .all(req.user.id, req.ride.id)
+  res.json({
+    memories: rows.map(mapMemoryRow),
+    memoryLimit: req.ride.memory_limit,
+    usedByMe: await memoryCountFor(req.ride.id, req.user.id),
+  })
+})
+
+rideRoutes.post('/:id/memories', loadRide, async (req, res) => {
+  const member = await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?').get(req.ride.id, req.user.id)
+  if (!member) return res.status(403).json({ error: 'Only ride members can share memories' })
+
+  const mediaUrl = String(req.body?.mediaUrl ?? '').trim()
+  if (!mediaUrl) return res.status(400).json({ error: 'mediaUrl is required' })
+  const mediaType = req.body?.mediaType === 'video' ? 'video' : 'photo'
+
+  const used = await memoryCountFor(req.ride.id, req.user.id)
+  if (used >= req.ride.memory_limit) {
+    return res.status(403).json({ error: `You've reached this ride's limit of ${req.ride.memory_limit} memories` })
+  }
+
+  const memory = {
+    id: uid('mem'),
+    ride_id: req.ride.id,
+    user_id: req.user.id,
+    media_url: mediaUrl,
+    media_type: mediaType,
+    caption: req.body?.caption ? String(req.body.caption).trim().slice(0, 500) : null,
+    created_at: now(),
+  }
+  await db.prepare(
+    `INSERT INTO memories (id, ride_id, user_id, media_url, media_type, caption, created_at) VALUES (?,?,?,?,?,?,?)`,
+  ).run(memory.id, memory.ride_id, memory.user_id, memory.media_url, memory.media_type, memory.caption, memory.created_at)
+
+  const saved = await db.prepare(`${MEMORY_ROW_SELECT} WHERE m.id = ?`).get(req.user.id, memory.id)
+  res.status(201).json({ memory: mapMemoryRow(saved) })
+})
+
+rideRoutes.post('/:id/memories/:memoryId/like', loadRide, async (req, res) => {
+  const memory = await db.prepare('SELECT 1 FROM memories WHERE id = ? AND ride_id = ?').get(req.params.memoryId, req.ride.id)
+  if (!memory) return res.status(404).json({ error: 'Memory not found' })
+
+  const existing = await db.prepare('SELECT 1 FROM memory_likes WHERE memory_id = ? AND user_id = ?')
+    .get(req.params.memoryId, req.user.id)
+  if (existing) {
+    await db.prepare('DELETE FROM memory_likes WHERE memory_id = ? AND user_id = ?').run(req.params.memoryId, req.user.id)
+  } else {
+    await db.prepare('INSERT INTO memory_likes (memory_id, user_id, created_at) VALUES (?,?,?)')
+      .run(req.params.memoryId, req.user.id, now())
+  }
+  const { count } = await db.prepare('SELECT COUNT(*)::int AS count FROM memory_likes WHERE memory_id = ?')
+    .get(req.params.memoryId)
+  res.json({ liked: !existing, likeCount: count })
+})
+
+rideRoutes.delete('/:id/memories/:memoryId', loadRide, async (req, res) => {
+  const memory = await db.prepare('SELECT * FROM memories WHERE id = ? AND ride_id = ?').get(req.params.memoryId, req.ride.id)
+  if (!memory) return res.status(404).json({ error: 'Memory not found' })
+  if (memory.user_id !== req.user.id && req.ride.leader_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the author or ride leader can remove this' })
+  }
+  await db.prepare('DELETE FROM memories WHERE id = ?').run(memory.id)
+  // Best-effort: reclaim the stored file too. A failure here (token not
+  // configured, blob already gone) shouldn't block removing the post itself.
+  await del(memory.media_url).catch(() => {})
+  res.status(204).end()
+})
+
+// Client-upload handshake: the browser never sends the file through this
+// server (Express is capped at 1mb bodies and Vercel functions have their
+// own payload ceiling) — it uploads straight to Blob storage using a
+// short-lived token minted here, after checking membership and the ride's
+// per-rider limit so nobody can burn storage past their cap.
+rideRoutes.post('/:id/memories/blob-upload', loadRide, async (req, res) => {
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async () => {
+        const member = await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?')
+          .get(req.ride.id, req.user.id)
+        if (!member) throw new Error('Only ride members can share memories')
+        const used = await memoryCountFor(req.ride.id, req.user.id)
+        if (used >= req.ride.memory_limit) {
+          throw new Error(`You've reached this ride's limit of ${req.ride.memory_limit} memories`)
+        }
+        return {
+          allowedContentTypes: MEMORY_CONTENT_TYPES,
+          maximumSizeInBytes: MEMORY_MAX_BYTES,
+          addRandomSuffix: true,
+        }
+      },
+    })
+    res.json(jsonResponse)
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
 })

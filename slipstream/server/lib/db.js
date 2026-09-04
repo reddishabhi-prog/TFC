@@ -128,9 +128,11 @@ CREATE TABLE IF NOT EXISTS rides (
   rating       INTEGER,
   notes        TEXT,
   fuel_cost    INTEGER,
+  memory_limit INTEGER NOT NULL DEFAULT 10,
   created_at   BIGINT NOT NULL,
   ended_at     BIGINT
 );
+ALTER TABLE rides ADD COLUMN IF NOT EXISTS memory_limit INTEGER NOT NULL DEFAULT 10;
 
 CREATE TABLE IF NOT EXISTS ride_members (
   ride_id   TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -205,6 +207,24 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at BIGINT NOT NULL
 );
 
+-- Photos/clips shared to a single ride, visible only to that ride's members.
+CREATE TABLE IF NOT EXISTS memories (
+  id         TEXT PRIMARY KEY,
+  ride_id    TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  media_url  TEXT NOT NULL,
+  media_type TEXT NOT NULL DEFAULT 'photo',
+  caption    TEXT,
+  created_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_likes (
+  memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (memory_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS vehicles (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -240,6 +260,8 @@ CREATE TABLE IF NOT EXISTS otps (
 
 CREATE INDEX IF NOT EXISTS idx_ride_members_user ON ride_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_memories_ride ON memories(ride_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_likes_memory ON memory_likes(memory_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, created_at);

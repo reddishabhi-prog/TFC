@@ -4,6 +4,7 @@ import { useAuth, useToast } from '../context/AppContext'
 import { Button, ConfirmDialog, Avatar, Pill } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { RideMap } from '../components/RideMap'
+import { RideMemories } from '../components/RideMemories'
 import { dateTimeLabel } from '../utils/format'
 
 // How often we (a) read the device's own GPS and push it up, and (b) poll for
@@ -20,6 +21,7 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [sos, setSos] = useState('idle')
+  const [view, setView] = useState('map')
 
   useEffect(() => {
     let cancelled = false
@@ -106,25 +108,34 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         </button>
       </header>
 
-      <div className="ride-map">
-        <RideMap members={ride.members} youId={user.id} />
-
-        {(ride.origin || ride.destination) && (
-          <div className="route-banner">
-            {ride.origin || 'Start'} <Icon name="arrowLeft" size={12} style={{ transform: 'rotate(180deg)' }} /> {ride.destination || 'Finish'}
-          </div>
-        )}
-
-        {!ride.members.some((m) => typeof m.lat === 'number') && (
-          <div className="map-hint">Waiting for riders to share their location…</div>
-        )}
-
-        {!ended && (
-          sos === 'sent'
-            ? <div className="sos-sent">🆘 SOS sent</div>
-            : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
-        )}
+      <div className="segmented ride-view-toggle">
+        <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>Map</button>
+        <button className={view === 'memories' ? 'on' : ''} onClick={() => setView('memories')}>Memories</button>
       </div>
+
+      {view === 'map' ? (
+        <div className="ride-map">
+          <RideMap members={ride.members} youId={user.id} />
+
+          {(ride.origin || ride.destination) && (
+            <div className="route-banner">
+              {ride.origin || 'Start'} <Icon name="arrowLeft" size={12} style={{ transform: 'rotate(180deg)' }} /> {ride.destination || 'Finish'}
+            </div>
+          )}
+
+          {!ride.members.some((m) => typeof m.lat === 'number') && (
+            <div className="map-hint">Waiting for riders to share their location…</div>
+          )}
+
+          {!ended && (
+            sos === 'sent'
+              ? <div className="sos-sent">🆘 SOS sent</div>
+              : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
+          )}
+        </div>
+      ) : (
+        <RideMemories ride={ride} onRideUpdated={setRide} />
+      )}
 
       <div className="ride-sheet">
         <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>

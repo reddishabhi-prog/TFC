@@ -63,6 +63,29 @@ test.describe('Rides', () => {
   })
 })
 
+test.describe('Memories', () => {
+  // Actually uploading a file needs a live Vercel Blob token this suite has
+  // no access to, so this covers everything reachable without one: the
+  // empty state, and the leader-only per-rider limit.
+  test('the leader can switch to Memories and change the per-rider limit', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Memory Keeper' })
+    await startRide(page, { name: 'Ghat Loop', destination: 'Coorg' })
+
+    await page.locator('.ride-view-toggle').getByRole('button', { name: 'Memories' }).click()
+    await expect(page.locator('.memories-empty-title')).toHaveText('Add your best memories')
+    await expect(page.getByText('0 / 10 shared')).toBeVisible()
+
+    await page.getByRole('button', { name: /Limit/i }).click()
+    await expect(page.getByText('Photo & video limit')).toBeVisible()
+    await page.getByRole('button', { name: 'Increase' }).click()
+    await page.getByRole('button', { name: 'Increase' }).click()
+    await expect(page.locator('.stepper-value')).toHaveText('12')
+    await page.getByRole('button', { name: /Save limit/i }).click()
+
+    await expect(page.getByText('0 / 12 shared')).toBeVisible()
+  })
+})
+
 test.describe('Split', () => {
   test.beforeEach(async ({ page }) => {
     await signUp(page, { phone: freshPhone(), name: 'Split Tester' })
