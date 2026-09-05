@@ -207,6 +207,7 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
   }
   const b = req.body ?? {}
   const status = ['live', 'paused', 'ended'].includes(b.status) ? b.status : req.ride.status
+  const justEnded = status === 'ended' && req.ride.status !== 'ended'
   const memoryLimit = Number.isFinite(Number(b.memoryLimit))
     ? Math.min(50, Math.max(1, Math.round(Number(b.memoryLimit))))
     : req.ride.memory_limit
@@ -214,7 +215,7 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
     `UPDATE rides SET status=?, distance_km=?, rating=?, notes=?, fuel_cost=?, leader_id=?, memory_limit=?, ended_at=? WHERE id=?`,
   ).run(
     status,
-    b.distanceKm ?? req.ride.distance_km,
+    b.distanceKm ?? (justEnded ? await trackDistanceKm(req.ride.id) : req.ride.distance_km),
     b.rating ?? req.ride.rating,
     b.notes ?? req.ride.notes,
     b.fuelCost ?? req.ride.fuel_cost,
@@ -252,6 +253,31 @@ rideRoutes.post('/:id/location', loadRide, async (req, res) => {
   }
   res.status(204).end()
 })
+
+/**
+ * How far the ride actually went, from the longest breadcrumb trail any rider
+ * recorded. Computed once when the ride ends, because nothing else ever wrote
+ * distance_km: the share card headlines it, the home list shows it, and the
+ * distance badges count it, so leaving it at 0 made all three permanently
+ * blank and the distance milestones unearnable.
+ */
+async function trackDistanceKm(rideId) {
+  const best = await db.prepare(
+    `SELECT user_id AS "userId", COUNT(*)::int AS points FROM ride_track
+      WHERE ride_id = ? GROUP BY user_id ORDER BY points DESC LIMIT 1`,
+  ).get(rideId)
+  if (!best || best.points < 2) return 0
+
+  const points = await db.prepare(
+    'SELECT lat, lng FROM ride_track WHERE ride_id = ? AND user_id = ? ORDER BY created_at ASC',
+  ).all(rideId, best.userId)
+
+  let metres = 0
+  for (let i = 1; i < points.length; i++) {
+    metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng)
+  }
+  return Math.round(metres / 100) / 10
+}
 
 // The finished ride's shape, for the end-of-ride share card: the leader's
 // breadcrumbs if they have any, otherwise whoever tracked the most.

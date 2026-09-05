@@ -3,7 +3,7 @@ import { Api } from '../services/api'
 import { useToast } from '../context/AppContext'
 import { Button } from './ui'
 import { Icon } from './Icon'
-import { dayLabel } from '../utils/format'
+import { dayLabel, firstName } from '../utils/format'
 
 // Instagram's portrait aspect. Drawn at full size off-screen and scaled down
 // for the preview, so what gets shared is poster-resolution, not screen-sized.
@@ -193,6 +193,31 @@ async function paintCard(canvas, { ride, points, photoUrl }) {
     ctx.fillText(unit, cx, y + 112)
     ctx.letterSpacing = '0px'
   })
+
+  // Footer, anchored to the bottom rather than flowed: the stats leave a
+  // quarter of the card empty otherwise, and this is the one place a card
+  // that gets posted can say who rode and what made it.
+  const footY = H - pad - 84
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(pad, footY)
+  ctx.lineTo(W - pad, footY)
+  ctx.stroke()
+
+  const names = (ride.members ?? []).map((m) => firstName(m.name)).filter(Boolean)
+  if (names.length > 1) {
+    const shown = names.length > 4 ? `${names.slice(0, 4).join(', ')} +${names.length - 4}` : names.join(', ')
+    ctx.fillStyle = 'rgba(255,255,255,0.78)'
+    ctx.font = '600 32px Inter, system-ui, sans-serif'
+    ctx.fillText(wrapLines(ctx, shown, W - pad * 2, 1)[0] ?? '', pad, footY + 50)
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.42)'
+  ctx.font = '700 24px Inter, system-ui, sans-serif'
+  ctx.letterSpacing = '4px'
+  ctx.fillText('RIDE TOGETHER, SPLIT FAIR', pad, footY + (names.length > 1 ? 104 : 54))
+  ctx.letterSpacing = '0px'
 }
 
 export function RideShareCard({ ride, onClose }) {

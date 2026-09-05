@@ -779,6 +779,11 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   position: relative; flex: 1; min-height: 200px;
   background: radial-gradient(circle at 30% 20%, #2a1119, #150a10 70%);
   overflow: hidden;
+  /* Leaflet stacks its own panes and controls as high as 1000. Without a
+     stacking context here those compete directly with the app's layers, and
+     map pins and the OSM attribution paint straight over dialogs and sheets.
+     z-index:0 contains the whole map in one layer. */
+  z-index: 0;
 }
 .ride-map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #150a10; }
 .route-banner {
@@ -954,6 +959,8 @@ button.hero-card { display: block; width: 100%; text-align: left; }
 .sheet-scrim {
   position: absolute; inset: 0; background: var(--surface-scrim);
   display: flex; align-items: flex-end; animation: fadeIn var(--dur-fast) var(--ease-out);
+  /* Peer of .overlay: above the tab bar (40), below toasts (80). */
+  z-index: 60;
 }
 .sheet {
   width: 100%; background: #1b1716; border-radius: 24px 24px 0 0;
