@@ -1074,8 +1074,12 @@ button.hero-card { display: block; width: 100%; text-align: left; }
    ========================================================================== */
 
 .garage-stats { display: flex; gap: var(--sp-7); margin-top: var(--sp-3); }
-.stat-value { font-size: var(--fs-h1); font-weight: var(--fw-heavy); color: #fff; font-variant-numeric: tabular-nums; }
-.stat-label {
+/* Scoped to the garage header, which sits on the dark brand ground. Left
+   unscoped these white values also matched the milestone tiles further up
+   the file and, being later in the cascade, painted white text on those
+   white cards — three blank boxes above the badges. */
+.garage-stats .stat-value { font-size: var(--fs-h1); font-weight: var(--fw-heavy); color: #fff; font-variant-numeric: tabular-nums; }
+.garage-stats .stat-label {
   font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: var(--tracking-wider);
   color: rgba(255,255,255,0.66); font-weight: var(--fw-strong);
 }
