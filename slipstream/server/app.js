@@ -23,6 +23,20 @@ app.use(cors())
 app.use(express.json({ limit: '1mb' }))
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, at: Date.now() }))
+
+// Which configuration actually reached this deployment, and which environment
+// it thinks it is. Presence booleans only — never values — so a missing or
+// mis-scoped variable can be diagnosed from the running app instead of by
+// reading the dashboard and hoping the two agree.
+app.get('/api/health/config', (_req, res) => {
+  const names = [
+    'DATABASE_URL', 'JWT_SECRET', 'BLOB_READ_WRITE_TOKEN', 'BLOB_STORE_ID', 'SMS_PROVIDER_URL',
+  ]
+  res.json({
+    vercelEnv: process.env.VERCEL_ENV ?? null,
+    present: Object.fromEntries(names.map((n) => [n, Boolean(process.env[n])])),
+  })
+})
 app.use('/api/auth', authRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/rides', rideRoutes)
