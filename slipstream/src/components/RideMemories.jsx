@@ -203,7 +203,13 @@ function ComposeSheet({ ride, remaining, onClose, onPosted }) {
       toast.success('Shared to the ride')
       onPosted(memory)
     } catch (e) {
-      toast.error(e?.message || 'Could not share that — try again')
+      // @vercel/blob throws away our endpoint's response body and reports
+      // every start-of-upload failure as "Failed to retrieve the client
+      // token", which tells a rider nothing. The server logs the real cause.
+      const raw = e?.message || ''
+      toast.error(/retrieve the client token/i.test(raw)
+        ? "Couldn't start the upload — photo storage may not be set up yet."
+        : raw || 'Could not share that — try again')
     } finally {
       setBusy(false)
     }

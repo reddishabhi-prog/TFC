@@ -413,6 +413,15 @@ rideRoutes.delete('/:id/memories/:memoryId', loadRide, async (req, res) => {
 // short-lived token minted here, after checking membership and the ride's
 // per-rider limit so nobody can burn storage past their cap.
 rideRoutes.post('/:id/memories/blob-upload', loadRide, async (req, res) => {
+  // Without a store connected, @vercel/blob throws a generic token error that
+  // reaches the rider as "Failed to retrieve the client token" — say what is
+  // actually wrong instead.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[slipstream] BLOB_READ_WRITE_TOKEN is not set for this deployment')
+    return res.status(503).json({
+      error: 'Photo storage is not configured yet. Connect a Vercel Blob store to this project.',
+    })
+  }
   try {
     const jsonResponse = await handleUpload({
       body: req.body,
@@ -434,6 +443,9 @@ rideRoutes.post('/:id/memories/blob-upload', loadRide, async (req, res) => {
     })
     res.json(jsonResponse)
   } catch (err) {
+    // The client SDK reports every failure here as "Failed to retrieve the
+    // client token", so the real reason has to reach the logs from this side.
+    console.error('[slipstream] blob-upload failed:', err?.message, err)
     res.status(400).json({ error: err.message })
   }
 })
