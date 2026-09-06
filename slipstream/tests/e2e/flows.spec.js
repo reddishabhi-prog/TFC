@@ -63,6 +63,25 @@ test.describe('Rides', () => {
   })
 })
 
+test.describe('Riders', () => {
+  test('inviting a number not on Slipstream offers a WhatsApp message', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Inviter' })
+    await page.getByRole('button', { name: /Start a ride/i }).click()
+    await page.locator('#ride-name').waitFor()
+
+    const friendPhone = freshPhone()
+    await page.locator('#rider-search').fill(friendPhone)
+    await page.getByPlaceholder('Their name').fill('Friend Rider')
+    await page.getByRole('button', { name: /^Invite$/ }).click()
+
+    const waLink = page.getByRole('link', { name: /Message on WhatsApp/i })
+    await expect(waLink).toBeVisible()
+    await expect(waLink).toHaveAttribute('href', new RegExp(`wa\\.me/91${friendPhone}\\?text=`))
+    // The invited friend shows up as a removable chip alongside the leader.
+    await expect(page.locator('.rider-chip-name', { hasText: 'Friend Rider' })).toBeVisible()
+  })
+})
+
 test.describe('Checklist', () => {
   test('the leader adds an item, ticks it, and readiness updates', async ({ page }) => {
     await signUp(page, { phone: freshPhone(), name: 'List Maker' })

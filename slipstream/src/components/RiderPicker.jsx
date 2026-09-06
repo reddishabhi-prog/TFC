@@ -12,6 +12,19 @@ import { validatePhone, validateName, digitsOnly } from '../utils/validate'
  * Selected riders render as removable chips rather than a plain list, so a
  * long group stays compact and each entry has its own remove target.
  */
+// Contact Picker API: Android Chrome/Chromium only — no iOS Safari or desktop
+// support at all. Feature-detected so the button simply doesn't render where
+// it can't work; those riders still fall back to typing a number by hand.
+const contactsSupported =
+  typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window
+
+function whatsappInviteUrl(name, phoneDigits) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const firstName = String(name ?? '').trim().split(/\s+/)[0] || 'there'
+  const text = `Hey ${firstName}! I'm using Slipstream to plan our rides — join the group here: ${origin}`
+  return `https://wa.me/91${phoneDigits}?text=${encodeURIComponent(text)}`
+}
+
 export function RiderPicker({ selected, onAdd, onRemove, leaderId, onMakeLeader, excludeIds = [] }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -19,12 +32,28 @@ export function RiderPicker({ selected, onAdd, onRemove, leaderId, onMakeLeader,
   const [inviting, setInviting] = useState(false)
   const [inviteName, setInviteName] = useState('')
   const [error, setError] = useState('')
+  const [waInvite, setWaInvite] = useState(null)
   const debounce = useRef()
   const abort = useRef()
 
   const digits = digitsOnly(query)
   const looksLikePhone = digits.length === 10
   const alreadyHave = (id) => selected.some((s) => s.id === id) || excludeIds.includes(id)
+
+  async function pickFromContacts() {
+    setError(''); setWaInvite(null)
+    try {
+      const [contact] = await navigator.contacts.select(['name', 'tel'], { multiple: false })
+      if (!contact) return
+      const name = contact.name?.[0] ?? ''
+      const phone = digitsOnly(contact.tel?.[0] ?? '', 12).slice(-10)
+      setInviteName(name)
+      setQuery(phone)
+      setResults([])
+    } catch (e) {
+      if (e.name !== 'AbortError') setError('Could not read that contact')
+    }
+  }
 
   useEffect(() => {
     clearTimeout(debounce.current)
@@ -62,11 +91,16 @@ export function RiderPicker({ selected, onAdd, onRemove, leaderId, onMakeLeader,
     const phoneError = validatePhone(digits)
     if (phoneError) return setError(phoneError)
 
-    setInviting(true); setError('')
+    const name = inviteName.trim()
+    setInviting(true); setError(''); setWaInvite(null)
     try {
-      const { user } = await Api.inviteUser({ name: inviteName.trim(), phone: digits })
-      if (alreadyHave(user.id)) setError('That rider is already in this group')
-      else pick({ id: user.id, name: user.name, avatarColor: user.avatarColor })
+      const { user } = await Api.inviteUser({ name, phone: digits })
+      if (alreadyHave(user.id)) {
+        setError('That rider is already in this group')
+      } else {
+        pick({ id: user.id, name: user.name, avatarColor: user.avatarColor })
+        setWaInvite({ name, url: whatsappInviteUrl(name, digits) })
+      }
       setInviteName('')
     } catch (e) {
       setError(e.message)
@@ -109,11 +143,17 @@ export function RiderPicker({ selected, onAdd, onRemove, leaderId, onMakeLeader,
           <Icon name="search" size={17} className="search-icon" />
           <input
             id="rider-search" className="input" value={query} placeholder="Name or mobile number"
-            onChange={(e) => { setQuery(e.target.value); setError('') }}
+            onChange={(e) => { setQuery(e.target.value); setError(''); setWaInvite(null) }}
           />
           {searching && <span className="btn-spinner search-spin" aria-hidden="true" />}
         </div>
       </Field>
+
+      {contactsSupported && (
+        <button type="button" className="link-btn" onClick={pickFromContacts}>
+          <Icon name="users" size={15} /> Add from contacts
+        </button>
+      )}
 
       {results.length > 0 && (
         <div className="stack" style={{ gap: 6 }}>
@@ -147,6 +187,25 @@ export function RiderPicker({ selected, onAdd, onRemove, leaderId, onMakeLeader,
             />
             <Button variant="primary" onClick={invite} loading={inviting}>Invite</Button>
           </div>
+        </div>
+      )}
+
+      {waInvite && (
+        <div className="card invite-card">
+          <div className="row" style={{ gap: 8 }}>
+            <Icon name="check" size={16} />
+            <span className="strong">{waInvite.name} added</span>
+          </div>
+          <p className="caption" style={{ marginTop: 4 }}>
+            Send them the invite on WhatsApp so they know to join.
+          </p>
+          <a
+            className="btn btn-primary" style={{ marginTop: 'var(--sp-3)' }}
+            href={waInvite.url} target="_blank" rel="noopener noreferrer"
+            onClick={() => setWaInvite(null)}
+          >
+            <Icon name="send" size={15} /> Message on WhatsApp
+          </a>
         </div>
       )}
     </div>
