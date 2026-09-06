@@ -77,6 +77,69 @@ test.describe('Rides', () => {
     await page.getByRole('button', { name: /Drop a pin at my location/i }).click()
     await expect(page.getByText('Pit stop added')).toBeVisible()
   })
+
+  test('the recenter button appears once located and is never hidden by the sheet', async ({ page, context }) => {
+    await context.grantPermissions(['geolocation'])
+    await context.setGeolocation({ latitude: 12.9716, longitude: 77.5946 })
+    await signUp(page, { phone: freshPhone(), name: 'Recenterer' })
+    await startRide(page)
+
+    // No rider has a location yet on the very first frame.
+    await expect(page.locator('.map-hint')).toBeVisible()
+    await expect(page.locator('.map-recenter')).toHaveCount(0)
+
+    // The poll loop picks up the granted geolocation shortly after mount.
+    const recenter = page.locator('.map-recenter')
+    await expect(recenter).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('.map-hint')).toHaveCount(0)
+
+    // Pan the map away from the group before checking recenter is reachable.
+    const canvas = page.locator('.ride-map-canvas')
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 150, box.y + box.height / 2 + 150, { steps: 5 })
+    await page.mouse.up()
+
+    // The button must sit fully above the peeked bottom sheet, not behind it.
+    const sheetBox = await page.locator('.ride-sheet-handle').boundingBox()
+    let btnBox = await recenter.boundingBox()
+    expect(btnBox.y + btnBox.height).toBeLessThan(sheetBox.y)
+
+    await recenter.click()
+    await expect(page.locator('.map-hint')).toHaveCount(0)
+
+    // Now expand the sheet and confirm the button is still fully reachable —
+    // this is the exact class of bug the .sheet-handle collision caused.
+    await page.locator('.ride-sheet-handle').click()
+    const expandedSheetBox = await page.locator('.ride-sheet').boundingBox()
+    btnBox = await recenter.boundingBox()
+    expect(btnBox.y + btnBox.height).toBeLessThan(expandedSheetBox.y)
+  })
+})
+
+test.describe('Home screen', () => {
+  test('a live ride shows the redesigned hero card with an avatar row and Open button', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Hero Carder' })
+    await startRide(page, { name: 'Ghats Sunrise Run', destination: 'Ooty' })
+
+    // Back out to Home rather than staying on the ride screen it opened into.
+    // This is in-memory SPA navigation (no history entries), so the app's own
+    // Back button is used rather than the browser's.
+    await page.getByRole('button', { name: 'Back' }).click()
+    await page.locator('.home-greeting').waitFor()
+
+    const hero = page.locator('.hero-card.live-hero')
+    await expect(hero).toBeVisible()
+    await expect(hero.locator('.hero-eyebrow')).toContainText('Active ride')
+    await expect(hero.locator('.hero-title')).toHaveText('Ghats Sunrise Run')
+    await expect(hero.locator('.hero-meta')).toContainText('Heading to Ooty')
+    await expect(hero.locator('.avatar-stack')).toBeVisible()
+    await expect(hero.getByText('Open')).toBeVisible()
+
+    await hero.click()
+    await page.locator('.join-code-value').waitFor()
+  })
 })
 
 test.describe('Riders', () => {
@@ -239,7 +302,10 @@ test.describe('Profile & settings', () => {
   })
 
   test('a valid email saves', async ({ page }) => {
-    await page.locator('#p-email').fill('rider@example.com')
+    // Unique per run: the server rejects an email already claimed by another
+    // account, and a hardcoded address would collide with itself on the next
+    // suite run against the same persistent test database.
+    await page.locator('#p-email').fill(`rider-${Date.now()}@example.com`)
     await page.getByRole('button', { name: /Save changes/i }).click()
     await expect(page.getByText('Profile saved')).toBeVisible()
   })
