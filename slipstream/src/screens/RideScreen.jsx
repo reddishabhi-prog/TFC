@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon'
 import { RideMap } from '../components/RideMap'
 import { RideMemories } from '../components/RideMemories'
 import { RideChecklist } from '../components/RideChecklist'
+import { RideItinerary } from '../components/RideItinerary'
 import { RideShareCard } from '../components/RideShareCard'
 import { dateTimeLabel } from '../utils/format'
 
@@ -115,6 +116,9 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       <div className="segmented ride-view-toggle">
         <button className={view === 'map' ? 'on' : ''} onClick={() => setView('map')}>Map</button>
         <button className={view === 'checklist' ? 'on' : ''} onClick={() => setView('checklist')}>Checklist</button>
+        {ride.days.length > 0 && (
+          <button className={view === 'plan' ? 'on' : ''} onClick={() => setView('plan')}>Plan</button>
+        )}
         <button className={view === 'memories' ? 'on' : ''} onClick={() => setView('memories')}>Memories</button>
       </div>
 
@@ -146,6 +150,8 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         </div>
       ) : view === 'checklist' ? (
         <RideChecklist ride={ride} />
+      ) : view === 'plan' && ride.days.length > 0 ? (
+        <RideItinerary ride={ride} />
       ) : (
         <RideMemories ride={ride} onRideUpdated={setRide} />
       )}

@@ -4,7 +4,24 @@ import { useAuth, useToast } from '../context/AppContext'
 import { Button, Field, TextInput, Segmented, ChipGroup } from '../components/ui'
 import { RiderPicker } from '../components/RiderPicker'
 import { Icon } from '../components/Icon'
-import { dateTimeLabel, toLocalInput, fromLocalInput, durationLabel } from '../utils/format'
+import { dateTimeLabel, dayLabel, toLocalInput, fromLocalInput, durationLabel } from '../utils/format'
+
+/** Local midnight for a date-only comparison against a datetime-local value. */
+function localMidnight(ms) {
+  const d = new Date(ms)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+const toDateInputValue = (ms) => {
+  const d = new Date(ms)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+const dateInputToMs = (str) => {
+  if (!str) return null
+  const [y, m, d] = str.split('-').map(Number)
+  return new Date(y, m - 1, d).getTime()
+}
 
 /** Presets cover almost every real ride; the exact picker is there for the rest. */
 function presetTimes() {
@@ -47,8 +64,46 @@ export function CreateRideScreen({ onCancel, onCreated }) {
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
 
+  const [tripEndDate, setTripEndDate] = useState('')
+  const [plan, setPlan] = useState(null)
+  const [days, setDays] = useState([])
+  const [planning, setPlanning] = useState(false)
+  const [planError, setPlanError] = useState('')
+  const [warningDismissed, setWarningDismissed] = useState(false)
+
   const set = (key, value) => setValues((v) => ({ ...v, [key]: value }))
   const everyone = [{ id: user.id, name: `${user.name} (you)`, avatarColor: user.avatarColor }, ...riders]
+
+  const startDateMs = localMidnight(values.startsAt)
+  const tripEndMs = dateInputToMs(tripEndDate)
+  const isMultiDay = tripEndMs !== null && tripEndMs > startDateMs
+  const selectedDays = isMultiDay ? Math.round((tripEndMs - startDateMs) / 86400000) + 1 : 0
+
+  function clearPlan() { setPlan(null); setDays([]); setPlanError(''); setWarningDismissed(false) }
+
+  async function planRoute() {
+    if (!values.origin.trim() || !values.destination.trim()) {
+      return setPlanError('Add a start location and destination first')
+    }
+    setPlanning(true); setPlanError('')
+    try {
+      const result = await Api.planRoute({
+        origin: values.origin.trim(),
+        destination: values.destination.trim(),
+        startDate: startDateMs,
+        endDate: tripEndMs,
+      })
+      setPlan(result)
+      setDays(result.days)
+      setWarningDismissed(false)
+    } catch (e) {
+      setPlanError(e.message || 'Could not plan that route right now')
+    } finally { setPlanning(false) }
+  }
+
+  function updateDay(index, patch) {
+    setDays((list) => list.map((d, i) => (i === index ? { ...d, ...patch } : d)))
+  }
 
   async function submit() {
     const next = {}
@@ -62,6 +117,8 @@ export function CreateRideScreen({ onCancel, onCreated }) {
         name: values.name.trim(),
         memberIds: riders.map((r) => r.id),
         leaderId,
+        tripEndsAt: isMultiDay ? tripEndMs : null,
+        days: isMultiDay ? days : [],
       })
       toast.success('Ride is live — share the join code')
       onCreated(ride)
@@ -137,13 +194,82 @@ export function CreateRideScreen({ onCancel, onCreated }) {
             <div className="section-title" style={{ margin: 0 }}>Route</div>
             <Field label="Start location" htmlFor="ride-from">
               <TextInput id="ride-from" placeholder="Bengaluru" value={values.origin}
-                         onChange={(e) => set('origin', e.target.value)} />
+                         onChange={(e) => { set('origin', e.target.value); clearPlan() }} />
             </Field>
             <Field label="Destination" htmlFor="ride-to">
               <TextInput id="ride-to" placeholder="Coorg" value={values.destination}
-                         onChange={(e) => set('destination', e.target.value)} />
+                         onChange={(e) => { set('destination', e.target.value); clearPlan() }} />
             </Field>
+            <Field label="Trip end date" htmlFor="ride-end-date"
+                   hint="Only for multi-day trips — leave blank for a same-day ride">
+              <input id="ride-end-date" type="date" className="input"
+                     min={toDateInputValue(startDateMs)}
+                     value={tripEndDate}
+                     onChange={(e) => { setTripEndDate(e.target.value); clearPlan() }} />
+            </Field>
+
+            {isMultiDay && (
+              <>
+                <Button variant="ground" icon="map" loading={planning}
+                        onClick={planRoute}>
+                  {plan ? 'Re-plan this route' : `Plan this route — ${selectedDays} days`}
+                </Button>
+                {planError && (
+                  <span className="field-error"><Icon name="alert" size={13} /> {planError}</span>
+                )}
+              </>
+            )}
           </div>
+
+          {plan && (
+            <div className="card stack">
+              <div className="section-title" style={{ margin: 0 }}>Trip plan</div>
+              <p className="caption">
+                {plan.origin.label} → {plan.destination.label} · {plan.distanceKm} km ·
+                {' '}about {plan.drivingHours}h of riding · usually taken over{' '}
+                {plan.recommendedDays}+ day{plan.recommendedDays === 1 ? '' : 's'}
+              </p>
+
+              {plan.tooShort && !warningDismissed && (
+                <div className="trip-warning">
+                  <div className="row" style={{ gap: 8 }}>
+                    <Icon name="alert" size={16} />
+                    <span className="strong">Only {plan.selectedDays} day{plan.selectedDays === 1 ? '' : 's'} picked</span>
+                  </div>
+                  <p className="caption" style={{ marginTop: 4 }}>
+                    This route is usually ridden over {plan.recommendedDays}+ days — riders often want
+                    more time for a trip like this. You can still go ahead with your own plan.
+                  </p>
+                  <Button variant="ghost" size="sm" onClick={() => setWarningDismissed(true)}>
+                    Continue with {plan.selectedDays} days
+                  </Button>
+                </div>
+              )}
+
+              <div className="stack" style={{ gap: 10 }}>
+                {days.map((d, i) => (
+                  <div className="trip-day" key={d.index}>
+                    <div className="row-between">
+                      <span className="strong">Day {d.index} · {dayLabel(d.date)}</span>
+                      {d.weather && (
+                        <span className="pill pill-muted">
+                          {d.weather.emoji} {d.weather.tempMinC}–{d.weather.tempMaxC}°C
+                          {!d.weather.isForecast && ' (typical)'}
+                        </span>
+                      )}
+                    </div>
+                    <TextInput placeholder={`Day ${d.index} stop`} value={d.place || ''}
+                               style={{ marginTop: 8 }}
+                               onChange={(e) => updateDay(i, { place: e.target.value })} />
+                    <textarea className="input" rows={2} style={{ marginTop: 8 }}
+                              placeholder="Notes for this day — fuel stops, road conditions, where you'll stay…"
+                              value={d.notes || ''}
+                              onChange={(e) => updateDay(i, { notes: e.target.value })} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="card stack">
             <div className="section-title" style={{ margin: 0 }}>Visibility</div>

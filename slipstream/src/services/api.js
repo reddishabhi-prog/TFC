@@ -77,6 +77,7 @@ export const Api = {
   ride: (id) => api.get(`/rides/${id}`),
   publicRides: () => api.get('/rides/public'),
   createRide: (payload) => api.post('/rides', payload),
+  planRoute: (payload) => api.post('/rides/plan', payload),
   joinRide: (joinCode) => api.post('/rides/join', { joinCode }),
   updateRide: (id, payload) => api.patch(`/rides/${id}`, payload),
   updateLocation: (id, payload) => api.post(`/rides/${id}/location`, payload),

@@ -253,3 +253,34 @@ test.describe('Chat', () => {
     await expect(page.getByLabel('Send message')).toBeDisabled()
   })
 })
+
+test.describe('Multi-day trip planning', () => {
+  // Planning a real route needs Nominatim/OSRM/Open-Meteo, which this suite
+  // has no network access to — so this covers what's reachable without them:
+  // the end-date field staying opt-in, and a network failure surfacing a
+  // real message instead of hanging or crashing the plan request.
+  test('a same-day ride has no end date or Plan tab by default', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Day Tripper' })
+    await startRide(page, { name: 'Evening Loop' })
+    await expect(page.locator('.ride-view-toggle').getByRole('button', { name: 'Plan' })).toHaveCount(0)
+  })
+
+  test('setting a trip end date reveals planning, and a failed lookup shows a real error', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Trip Planner' })
+    await page.getByRole('button', { name: /Start a ride/i }).click()
+    await page.locator('#ride-name').waitFor()
+    await page.locator('#ride-name').fill('Jaipur to Leh')
+    await page.locator('#ride-from').fill('Jaipur')
+    await page.locator('#ride-to').fill('Leh')
+
+    await expect(page.getByRole('button', { name: /Plan this route/i })).toHaveCount(0)
+
+    const endDate = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10)
+    await page.locator('#ride-end-date').fill(endDate)
+
+    const planButton = page.getByRole('button', { name: /Plan this route — 6 days/i })
+    await expect(planButton).toBeVisible()
+    await planButton.click()
+    await expect(page.locator('.field-error')).toBeVisible({ timeout: 15000 })
+  })
+})

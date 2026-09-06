@@ -129,10 +129,15 @@ CREATE TABLE IF NOT EXISTS rides (
   notes        TEXT,
   fuel_cost    INTEGER,
   memory_limit INTEGER NOT NULL DEFAULT 10,
+  trip_ends_at BIGINT,
   created_at   BIGINT NOT NULL,
   ended_at     BIGINT
 );
 ALTER TABLE rides ADD COLUMN IF NOT EXISTS memory_limit INTEGER NOT NULL DEFAULT 10;
+-- The planned last day of a multi-day trip. Named apart from ended_at, which
+-- is when the leader actually taps "End" — a trip can run short or long of
+-- its plan, and the two must never collide.
+ALTER TABLE rides ADD COLUMN IF NOT EXISTS trip_ends_at BIGINT;
 
 CREATE TABLE IF NOT EXISTS ride_members (
   ride_id   TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -224,6 +229,25 @@ CREATE TABLE IF NOT EXISTS checklist_checks (
   PRIMARY KEY (item_id, user_id)
 );
 
+-- One row per planned day of a multi-day trip. Populated from POST /rides/plan
+-- (route sampled into day-sized legs, each reverse-geocoded and given a
+-- weather snapshot) at ride-creation time, then editable by the leader.
+-- weather is stored as the JSON snapshot fetched at plan time, not re-fetched
+-- live on every view — a forecast made when the ride was created rather than
+-- a promise to always be current.
+CREATE TABLE IF NOT EXISTS ride_days (
+  id         TEXT PRIMARY KEY,
+  ride_id    TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+  day_index  INTEGER NOT NULL,
+  date       BIGINT NOT NULL,
+  place      TEXT,
+  notes      TEXT,
+  lat        DOUBLE PRECISION,
+  lng        DOUBLE PRECISION,
+  weather    JSONB,
+  UNIQUE (ride_id, day_index)
+);
+
 -- Photos/clips shared to a single ride, visible only to that ride's members.
 CREATE TABLE IF NOT EXISTS memories (
   id         TEXT PRIMARY KEY,
@@ -295,6 +319,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_likes_memory ON memory_likes(memory_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_ride ON checklist_items(ride_id, seq);
 CREATE INDEX IF NOT EXISTS idx_checklist_checks_item ON checklist_checks(item_id);
 CREATE INDEX IF NOT EXISTS idx_ride_track_ride ON ride_track(ride_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ride_days_ride ON ride_days(ride_id, day_index);
 CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, created_at);

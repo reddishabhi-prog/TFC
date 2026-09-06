@@ -309,6 +309,17 @@ select.input { appearance: none; padding-right: var(--sp-8); cursor: pointer; }
 }
 .card-raised { background: var(--surface-raised); box-shadow: var(--shadow-2); border: 1px solid var(--border-subtle); border-radius: var(--r-lg); padding: var(--sp-5); }
 
+.trip-warning {
+  background: var(--warning-100); border: 1px solid var(--warning-500);
+  border-radius: var(--r-md); padding: var(--sp-3);
+  color: var(--text-body);
+}
+.trip-warning .strong { color: var(--warning-500); }
+.trip-day {
+  background: var(--surface-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md); padding: var(--sp-3);
+}
+
 .hero-card {
   position: relative;
   overflow: hidden;
