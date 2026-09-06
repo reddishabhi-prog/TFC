@@ -179,19 +179,17 @@ export function CreateRideScreen({ onCancel, onCreated }) {
 
   return (
     <div className="screen screen-enter">
-      <header className="app-bar">
-        <button className="icon-btn" onClick={onCancel} aria-label="Cancel">
+      <header className="app-bar on-ground">
+        <button className="icon-btn on-ground" onClick={onCancel} aria-label="Cancel">
           <Icon name="close" />
         </button>
+        <div className="app-bar-title">
+          <div className="app-bar-title-1">New ride</div>
+          <div className="app-bar-title-2">Plan it, invite the pack</div>
+        </div>
       </header>
 
       <div className="screen-scroll pad" style={{ paddingTop: 'var(--sp-4)' }}>
-        <div className="create-ride-intro">
-          <span className="create-ride-eyebrow"><span className="eyebrow-dot" aria-hidden="true" />Plan a ride</span>
-          <h1 className="create-ride-title">Where are we<br />heading next?</h1>
-          <p className="create-ride-sub">Keep it light — you can fill in the rest with the group later.</p>
-        </div>
-
         <div className="stack-lg">
           <div className="card stack">
             <Field label="Ride name" htmlFor="ride-name" error={errors.name} required>
@@ -242,10 +240,7 @@ export function CreateRideScreen({ onCancel, onCreated }) {
           </div>
 
           <div className="card stack">
-            <div className="section-title" style={{ margin: 0 }}>Where are you headed?</div>
-            <p className="caption" style={{ marginTop: -6 }}>
-              Optional — add a start and destination to preview the road, or skip it for a ride you'll plan on the go.
-            </p>
+            <div className="section-title" style={{ margin: 0 }}>Route</div>
             <Field label="Start location" htmlFor="ride-from">
               <TextInput id="ride-from" placeholder="Bengaluru" value={values.origin}
                          onChange={(e) => { set('origin', e.target.value); clearRoute() }} />
@@ -347,7 +342,7 @@ export function CreateRideScreen({ onCancel, onCreated }) {
           )}
 
           <div className="card stack">
-            <div className="section-title" style={{ margin: 0 }}>Who can join?</div>
+            <div className="section-title" style={{ margin: 0 }}>Visibility</div>
             <Segmented
               label="Who can join"
               value={values.visibility}
