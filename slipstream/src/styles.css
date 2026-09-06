@@ -799,6 +799,13 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   border-radius: var(--r-md); padding: 6px 10px;
   font-size: var(--fs-2xs); font-weight: var(--fw-strong); max-width: 60%;
 }
+.map-recenter {
+  position: absolute; top: var(--sp-4); right: var(--sp-4);
+  width: 42px; height: 42px; border-radius: var(--r-full);
+  background: rgba(20,17,16,0.85); color: #fff;
+  display: grid; place-items: center; box-shadow: var(--shadow-2);
+}
+.map-recenter:active { transform: scale(0.94); }
 .rider-pin {
   display: grid; place-items: center;
   width: 34px; height: 34px; border-radius: var(--r-full);

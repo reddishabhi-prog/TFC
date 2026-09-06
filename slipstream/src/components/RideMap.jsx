@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -27,18 +27,40 @@ function pinIcon(member, isYou) {
 }
 
 /** Live convoy map: one marker per rider who has shared a location, updated
- *  in place as fresh coordinates arrive instead of re-mounting the map. */
-export function RideMap({ members, youId }) {
+ *  in place as fresh coordinates arrive instead of re-mounting the map.
+ *  Exposes recenter() via ref for a manual "back to the group" control, since
+ *  auto-fit deliberately stops fighting the user after the first frame. */
+export const RideMap = forwardRef(function RideMap({ members, youId }, ref) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
+  const membersRef = useRef(members)
+  membersRef.current = members
+  // Riders already framed at least once. Position updates land every poll —
+  // fitBounds on every one of them fights anyone who has zoomed in or panned
+  // to actually look at the map, snapping it back a few seconds later. Only
+  // reframe when someone's location appears for the first time.
+  const framedRef = useRef(new Set())
+
+  useImperativeHandle(ref, () => ({
+    recenter() {
+      const map = mapRef.current
+      const located = membersRef.current.filter((m) => typeof m.lat === 'number' && typeof m.lng === 'number')
+      if (!map || !located.length) return
+      const bounds = L.latLngBounds(located.map((m) => [m.lat, m.lng]))
+      map.fitBounds(bounds.pad(0.35), { maxZoom: 15 })
+    },
+  }), [])
 
   useEffect(() => {
     const map = L.map(elRef.current, { attributionControl: true, zoomControl: true })
       .setView(DEFAULT_CENTER, DEFAULT_ZOOM)
     L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTRIBUTION }).addTo(map)
     mapRef.current = map
-    return () => { map.remove(); mapRef.current = null; markersRef.current = new Map() }
+    return () => {
+      map.remove(); mapRef.current = null
+      markersRef.current = new Map(); framedRef.current = new Set()
+    }
   }, [])
 
   useEffect(() => {
@@ -64,11 +86,13 @@ export function RideMap({ members, youId }) {
       if (!seen.has(id)) { marker.remove(); markersRef.current.delete(id) }
     }
 
-    if (located.length) {
+    const newlyLocated = located.filter((m) => !framedRef.current.has(m.id))
+    if (newlyLocated.length) {
       const bounds = L.latLngBounds(located.map((m) => [m.lat, m.lng]))
       map.fitBounds(bounds.pad(0.35), { maxZoom: 15 })
+      for (const m of located) framedRef.current.add(m.id)
     }
   }, [members, youId])
 
   return <div className="ride-map-canvas" ref={elRef} />
-}
+})

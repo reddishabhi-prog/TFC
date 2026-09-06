@@ -25,6 +25,7 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const [sos, setSos] = useState('idle')
   const [view, setView] = useState('map')
   const [shareCard, setShareCard] = useState(false)
+  const mapRef = useRef(null)
 
   useEffect(() => {
     let cancelled = false
@@ -119,7 +120,7 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
 
       {view === 'map' ? (
         <div className="ride-map">
-          <RideMap members={ride.members} youId={user.id} />
+          <RideMap ref={mapRef} members={ride.members} youId={user.id} />
 
           {(ride.origin || ride.destination) && (
             <div className="route-banner">
@@ -129,6 +130,12 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
 
           {!ride.members.some((m) => typeof m.lat === 'number') && (
             <div className="map-hint">Waiting for riders to share their location…</div>
+          )}
+
+          {ride.members.some((m) => typeof m.lat === 'number') && (
+            <button className="map-recenter" onClick={() => mapRef.current?.recenter()} aria-label="Recenter on the group">
+              <Icon name="locate" size={19} />
+            </button>
           )}
 
           {!ended && (
