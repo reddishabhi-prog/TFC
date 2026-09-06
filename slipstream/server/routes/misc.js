@@ -186,7 +186,7 @@ notificationRoutes.get('/', async (req, res) => {
     .all(req.user.id)
   res.json({
     notifications: rows.map((n) => ({
-      id: n.id, kind: n.kind, title: n.title, body: n.body,
+      id: n.id, kind: n.kind, title: n.title, body: n.body, rideId: n.ride_id,
       readAt: n.read_at ? Number(n.read_at) : null, createdAt: Number(n.created_at),
     })),
     unread: rows.filter((n) => !n.read_at).length,

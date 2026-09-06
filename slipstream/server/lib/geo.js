@@ -44,23 +44,39 @@ export async function reverseGeocode(lat, lng) {
 }
 
 /**
- * Driving route between two points via OSRM's public demo server: total
+ * Driving route(s) between two points via OSRM's public demo server: total
  * distance/duration plus the road geometry, so day stops can be sampled
  * along the actual route rather than a straight line between endpoints.
+ *
+ * With `alternatives: true`, OSRM returns every distinct road option it
+ * found (there are almost always at least two ways to get anywhere) instead
+ * of just the fastest — the rider picks which one this trip actually
+ * follows rather than having one silently chosen for them.
  */
-export async function drivingRoute(from, to) {
+export async function drivingRoute(from, to, { alternatives = false } = {}) {
   const coords = `${from.lng},${from.lat};${to.lng},${to.lat}`
-  const url = `${OSRM_BASE}/route/v1/driving/${coords}?overview=full&geometries=geojson`
+  const url = `${OSRM_BASE}/route/v1/driving/${coords}?overview=full&geometries=geojson${alternatives ? '&alternatives=true' : ''}`
   const res = await fetch(url)
   if (!res.ok) throw new Error('Could not map that route right now')
   const data = await res.json()
-  const route = data.routes?.[0]
-  if (!route) throw new Error('No driving route found between those two places')
-  return {
+  const routes = data.routes ?? []
+  if (!routes.length) throw new Error('No driving route found between those two places')
+  return routes.map((route) => ({
     distanceKm: route.distance / 1000,
     durationHours: route.duration / 3600,
     points: route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng })),
-  }
+  }))
+}
+
+/** Thins a point list to at most `max` points, always keeping the first and
+ *  last — for shipping a route's geometry to the client without sending
+ *  every one of OSRM's often-thousands of raw shape points over the wire. */
+export function decimate(points, max) {
+  if (points.length <= max) return points
+  const step = (points.length - 1) / (max - 1)
+  const out = []
+  for (let i = 0; i < max; i++) out.push(points[Math.round(i * step)])
+  return out
 }
 
 function haversineKm(a, b) {

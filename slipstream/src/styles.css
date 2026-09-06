@@ -465,6 +465,24 @@ button.list-row:active { transform: scale(0.99); }
 }
 
 /* ==========================================================================
+   Notifications
+   ========================================================================== */
+
+.notification-row { align-items: flex-start; }
+.notification-row .list-row-sub { white-space: normal; overflow: visible; }
+.notification-row.unread { border-color: var(--brand-200); background: var(--brand-50); }
+.notification-row.unread .list-row-title::after {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 7px;
+  border-radius: var(--r-full); background: var(--brand-500); vertical-align: middle;
+}
+.notification-row.is-sos .list-row-icon { background: var(--danger-100); color: var(--danger-500); }
+.bell-badge {
+  position: absolute; top: 6px; right: 6px;
+  width: 9px; height: 9px; border-radius: var(--r-full);
+  background: var(--danger-500); box-shadow: 0 0 0 2px var(--surface-page);
+}
+
+/* ==========================================================================
    Empty & loading states
    ========================================================================== */
 
@@ -786,8 +804,13 @@ button.hero-card { display: block; width: 100%; text-align: left; }
    Ride map
    ========================================================================== */
 
+/* The map fills the entire remaining screen; the sheet below floats on top
+   of it as a collapsible overlay instead of permanently claiming half the
+   height in the flex flow — the map should be what's visible, not a strip
+   above a wall of buttons. */
+.ride-map-view { position: relative; flex: 1; min-height: 0; --sheet-peek: 112px; }
 .ride-map {
-  position: relative; flex: 1; min-height: 200px;
+  position: absolute; inset: 0;
   background: radial-gradient(circle at 30% 20%, #2a1119, #150a10 70%);
   overflow: hidden;
   /* Leaflet stacks its own panes and controls as high as 1000. Without a
@@ -805,7 +828,7 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   font-size: var(--fs-2xs); font-weight: var(--fw-heavy); white-space: nowrap;
 }
 .map-hint {
-  position: absolute; bottom: var(--sp-4); left: var(--sp-4); pointer-events: none;
+  position: absolute; bottom: calc(var(--sheet-peek) + var(--sp-3)); left: var(--sp-4); pointer-events: none;
   background: rgba(20,17,16,0.85); color: var(--text-inverse, #fff);
   border-radius: var(--r-md); padding: 6px 10px;
   font-size: var(--fs-2xs); font-weight: var(--fw-strong); max-width: 60%;
@@ -825,7 +848,7 @@ button.hero-card { display: block; width: 100%; text-align: left; }
 }
 .rider-pin-you { border-color: #ffb84d; box-shadow: 0 0 0 3px rgba(255,184,77,0.35), var(--shadow-2); }
 .sos-btn {
-  position: absolute; right: var(--sp-4); bottom: var(--sp-4);
+  position: absolute; right: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));
   width: 68px; height: 68px; border-radius: var(--r-full);
   background: var(--danger-500); color: #fff;
   font-weight: var(--fw-heavy); font-size: var(--fs-sm);
@@ -833,11 +856,25 @@ button.hero-card { display: block; width: 100%; text-align: left; }
 }
 .sos-btn:active { transform: scale(0.95); }
 .sos-sent {
-  position: absolute; right: var(--sp-4); bottom: var(--sp-4);
+  position: absolute; right: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));
   padding: var(--sp-3) var(--sp-4); border-radius: var(--r-full);
   background: var(--ink-800); color: #fff; font-weight: var(--fw-strong); font-size: var(--fs-sm);
 }
 .ride-view-toggle { margin: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
+
+/* ==========================================================================
+   Route picker (ride creation)
+   ========================================================================== */
+
+.route-picker-canvas {
+  width: 100%; height: 240px; border-radius: var(--r-md); overflow: hidden;
+  background: #150a10;
+}
+.route-option.on { border-color: var(--brand-200); background: var(--brand-50); }
+.route-option-swatch {
+  width: 12px; height: 12px; border-radius: var(--r-full); flex-shrink: 0;
+  box-shadow: 0 0 0 2px var(--surface-card);
+}
 
 /* ==========================================================================
    Ride checklist
@@ -1038,13 +1075,24 @@ button.hero-card { display: block; width: 100%; text-align: left; }
 }
 .limit-note svg { flex-shrink: 0; margin-top: 1px; }
 
+/* Overlays the map instead of sharing flex space with it, so the map reads
+   as full-screen by default — the handle peeks up just enough to be found
+   and tapped open for the join code, actions, and rider list. */
 .ride-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
   background: var(--surface-raised);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
-  padding: var(--sp-4);
-  max-height: 52%; overflow-y: auto;
+  padding: 0 var(--sp-4) var(--sp-4);
+  max-height: var(--sheet-peek, 112px); overflow: hidden;
   box-shadow: 0 -12px 32px -12px rgba(0,0,0,0.3);
+  transition: max-height var(--dur-med) var(--ease-out);
 }
+.ride-sheet.expanded { max-height: 72vh; overflow-y: auto; }
+.sheet-handle {
+  display: flex; justify-content: center; width: 100%;
+  padding: var(--sp-2) 0; margin-bottom: 2px;
+}
+.sheet-handle-bar { width: 36px; height: 4px; border-radius: var(--r-full); background: var(--border-strong); }
 .join-code {
   display: flex; align-items: center; gap: var(--sp-3);
   width: 100%; padding: var(--sp-3) var(--sp-4);

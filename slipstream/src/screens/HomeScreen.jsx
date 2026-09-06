@@ -18,12 +18,16 @@ export function HomeScreen({ onNavigate, onOpenRide }) {
   const [rides, setRides] = useState(null)
   const [joinCode, setJoinCode] = useState('')
   const [joining, setJoining] = useState(false)
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     Api.rides()
       .then((r) => { if (!cancelled) setRides(r.rides) })
       .catch(() => { if (!cancelled) setRides([]) })
+    Api.notifications()
+      .then((r) => { if (!cancelled) setUnread(r.unread) })
+      .catch(() => {})
     return () => { cancelled = true }
   }, [])
 
@@ -54,8 +58,10 @@ export function HomeScreen({ onNavigate, onOpenRide }) {
             Hey {firstName(user?.name) || 'rider'} 👋
           </div>
         </div>
-        <button className="icon-btn" aria-label="Notifications" onClick={() => onNavigate('notifications')}>
+        <button className="icon-btn" style={{ position: 'relative' }} aria-label="Notifications"
+                onClick={() => onNavigate('notifications')}>
           <Icon name="bell" />
+          {unread > 0 && <span className="bell-badge" aria-hidden="true" />}
         </button>
       </header>
 

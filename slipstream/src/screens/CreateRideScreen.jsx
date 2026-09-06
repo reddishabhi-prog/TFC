@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Api } from '../services/api'
 import { useAuth, useToast } from '../context/AppContext'
 import { Button, Field, TextInput, Segmented, ChipGroup } from '../components/ui'
 import { RiderPicker } from '../components/RiderPicker'
+import { RoutePicker } from '../components/RoutePicker'
 import { Icon } from '../components/Icon'
 import { dateTimeLabel, dayLabel, toLocalInput, fromLocalInput, durationLabel } from '../utils/format'
 
@@ -64,11 +65,22 @@ export function CreateRideScreen({ onCancel, onCreated }) {
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
 
+  // The route picker: every alternative OSRM found between origin and
+  // destination, drawn on a map so the leader — not the routing engine —
+  // decides which road this trip actually follows.
+  const [routeResult, setRouteResult] = useState(null)
+  const [routeIndex, setRouteIndex] = useState(0)
+  const [findingRoutes, setFindingRoutes] = useState(false)
+  const [routeError, setRouteError] = useState('')
+  const selectedRoute = routeResult?.routes[routeIndex] ?? null
+
+  // The day-by-day plan. Slots are the leader's own to fill in — nothing here
+  // ever invents a stop name — weather is the only thing a lookup can add.
   const [tripEndDate, setTripEndDate] = useState('')
-  const [plan, setPlan] = useState(null)
   const [days, setDays] = useState([])
-  const [planning, setPlanning] = useState(false)
-  const [planError, setPlanError] = useState('')
+  const [tripInfo, setTripInfo] = useState(null)
+  const [checkingWeather, setCheckingWeather] = useState(false)
+  const [weatherError, setWeatherError] = useState('')
   const [warningDismissed, setWarningDismissed] = useState(false)
 
   const set = (key, value) => setValues((v) => ({ ...v, [key]: value }))
@@ -79,30 +91,61 @@ export function CreateRideScreen({ onCancel, onCreated }) {
   const isMultiDay = tripEndMs !== null && tripEndMs > startDateMs
   const selectedDays = isMultiDay ? Math.round((tripEndMs - startDateMs) / 86400000) + 1 : 0
 
-  function clearPlan() { setPlan(null); setDays([]); setPlanError(''); setWarningDismissed(false) }
+  function clearRoute() { setRouteResult(null); setRouteIndex(0); setRouteError(''); setTripInfo(null) }
 
-  async function planRoute() {
+  async function findRoutes() {
     if (!values.origin.trim() || !values.destination.trim()) {
-      return setPlanError('Add a start location and destination first')
+      return setRouteError('Add a start location and destination first')
     }
-    setPlanning(true); setPlanError('')
+    setFindingRoutes(true); setRouteError('')
     try {
-      const result = await Api.planRoute({
-        origin: values.origin.trim(),
-        destination: values.destination.trim(),
-        startDate: startDateMs,
-        endDate: tripEndMs,
-      })
-      setPlan(result)
-      setDays(result.days)
-      setWarningDismissed(false)
+      const result = await Api.routeOptions({ origin: values.origin.trim(), destination: values.destination.trim() })
+      setRouteResult(result)
+      setRouteIndex(0)
+      setTripInfo(null)
     } catch (e) {
-      setPlanError(e.message || 'Could not plan that route right now')
-    } finally { setPlanning(false) }
+      setRouteResult(null)
+      setRouteError(e.message || 'Could not find routes right now')
+    } finally {
+      setFindingRoutes(false)
+    }
   }
+
+  // As soon as an end date makes this a multi-day trip, the leader gets one
+  // slot per day to fill in themselves — no place names are ever guessed.
+  // Existing place/notes survive when the day count changes; only the count
+  // and dates adjust.
+  useEffect(() => {
+    if (!isMultiDay) { setDays([]); return }
+    setDays((prev) => Array.from({ length: selectedDays }, (_, i) => {
+      const date = startDateMs + i * 86400000
+      return prev[i] ? { ...prev[i], date } : { index: i + 1, date, place: '', notes: '', weather: null }
+    }))
+  }, [isMultiDay, selectedDays, startDateMs])
 
   function updateDay(index, patch) {
     setDays((list) => list.map((d, i) => (i === index ? { ...d, ...patch } : d)))
+  }
+
+  async function checkWeather() {
+    if (!selectedRoute) return
+    setCheckingWeather(true); setWeatherError('')
+    try {
+      const result = await Api.planRoute({
+        startDate: startDateMs,
+        endDate: tripEndMs,
+        distanceKm: selectedRoute.distanceKm,
+        durationHours: selectedRoute.durationHours,
+        points: selectedRoute.points,
+      })
+      setTripInfo(result)
+      setDays((prev) => prev.map((d, i) => ({ ...d, weather: result.days[i]?.weather ?? d.weather })))
+      setWarningDismissed(false)
+    } catch (e) {
+      setWeatherError(e.message || 'Could not check the weather right now')
+    } finally {
+      setCheckingWeather(false)
+    }
   }
 
   async function submit() {
@@ -119,6 +162,7 @@ export function CreateRideScreen({ onCancel, onCreated }) {
         leaderId,
         tripEndsAt: isMultiDay ? tripEndMs : null,
         days: isMultiDay ? days : [],
+        routePoints: selectedRoute?.points ?? null,
       })
       toast.success('Ride is live — share the join code')
       onCreated(ride)
@@ -194,54 +238,75 @@ export function CreateRideScreen({ onCancel, onCreated }) {
             <div className="section-title" style={{ margin: 0 }}>Route</div>
             <Field label="Start location" htmlFor="ride-from">
               <TextInput id="ride-from" placeholder="Bengaluru" value={values.origin}
-                         onChange={(e) => { set('origin', e.target.value); clearPlan() }} />
+                         onChange={(e) => { set('origin', e.target.value); clearRoute() }} />
             </Field>
             <Field label="Destination" htmlFor="ride-to">
               <TextInput id="ride-to" placeholder="Coorg" value={values.destination}
-                         onChange={(e) => { set('destination', e.target.value); clearPlan() }} />
+                         onChange={(e) => { set('destination', e.target.value); clearRoute() }} />
             </Field>
+
+            <Button variant="ground" icon="map" loading={findingRoutes} onClick={findRoutes}>
+              {routeResult ? 'Find routes again' : 'Find routes'}
+            </Button>
+            {routeError && <span className="field-error"><Icon name="alert" size={13} /> {routeError}</span>}
+
+            {routeResult && (
+              <>
+                <p className="caption">
+                  {routeResult.origin.label} → {routeResult.destination.label} · there's more than one way to
+                  get there — pick the road this trip actually follows.
+                </p>
+                <RoutePicker
+                  origin={routeResult.origin} destination={routeResult.destination}
+                  routes={routeResult.routes} selected={routeIndex}
+                  onSelect={(i) => { setRouteIndex(i); setTripInfo(null) }}
+                />
+              </>
+            )}
+
             <Field label="Trip end date" htmlFor="ride-end-date"
                    hint="Only for multi-day trips — leave blank for a same-day ride">
               <input id="ride-end-date" type="date" className="input"
                      min={toDateInputValue(startDateMs)}
                      value={tripEndDate}
-                     onChange={(e) => { setTripEndDate(e.target.value); clearPlan() }} />
+                     onChange={(e) => setTripEndDate(e.target.value)} />
             </Field>
-
-            {isMultiDay && (
-              <>
-                <Button variant="ground" icon="map" loading={planning}
-                        onClick={planRoute}>
-                  {plan ? 'Re-plan this route' : `Plan this route — ${selectedDays} days`}
-                </Button>
-                {planError && (
-                  <span className="field-error"><Icon name="alert" size={13} /> {planError}</span>
-                )}
-              </>
-            )}
           </div>
 
-          {plan && (
+          {isMultiDay && (
             <div className="card stack">
-              <div className="section-title" style={{ margin: 0 }}>Trip plan</div>
-              <p className="caption">
-                {plan.origin.label} → {plan.destination.label} · {plan.distanceKm} km ·
-                {' '}about {plan.drivingHours}h of riding · usually taken over{' '}
-                {plan.recommendedDays}+ day{plan.recommendedDays === 1 ? '' : 's'}
-              </p>
+              <div className="row-between">
+                <div className="section-title" style={{ margin: 0 }}>
+                  {selectedDays}-day plan
+                </div>
+                <Button variant="ghost" size="sm" icon="sun" loading={checkingWeather}
+                        disabled={!selectedRoute} onClick={checkWeather}>
+                  Check weather
+                </Button>
+              </div>
+              {!selectedRoute && (
+                <p className="caption">Find and pick a route above to check the weather for these dates.</p>
+              )}
+              {weatherError && <span className="field-error"><Icon name="alert" size={13} /> {weatherError}</span>}
 
-              {plan.tooShort && !warningDismissed && (
+              {tripInfo && (
+                <p className="caption">
+                  {tripInfo.distanceKm} km · about {tripInfo.drivingHours}h of riding · usually taken over{' '}
+                  {tripInfo.recommendedDays}+ day{tripInfo.recommendedDays === 1 ? '' : 's'}
+                </p>
+              )}
+              {tripInfo?.tooShort && !warningDismissed && (
                 <div className="trip-warning">
                   <div className="row" style={{ gap: 8 }}>
                     <Icon name="alert" size={16} />
-                    <span className="strong">Only {plan.selectedDays} day{plan.selectedDays === 1 ? '' : 's'} picked</span>
+                    <span className="strong">Only {tripInfo.selectedDays} day{tripInfo.selectedDays === 1 ? '' : 's'} picked</span>
                   </div>
                   <p className="caption" style={{ marginTop: 4 }}>
-                    This route is usually ridden over {plan.recommendedDays}+ days — riders often want
+                    This route is usually ridden over {tripInfo.recommendedDays}+ days — riders often want
                     more time for a trip like this. You can still go ahead with your own plan.
                   </p>
                   <Button variant="ghost" size="sm" onClick={() => setWarningDismissed(true)}>
-                    Continue with {plan.selectedDays} days
+                    Continue with {tripInfo.selectedDays} days
                   </Button>
                 </div>
               )}
@@ -258,7 +323,7 @@ export function CreateRideScreen({ onCancel, onCreated }) {
                         </span>
                       )}
                     </div>
-                    <TextInput placeholder={`Day ${d.index} stop`} value={d.place || ''}
+                    <TextInput placeholder={`Where are you stopping on day ${d.index}?`} value={d.place || ''}
                                style={{ marginTop: 8 }}
                                onChange={(e) => updateDay(i, { place: e.target.value })} />
                     <textarea className="input" rows={2} style={{ marginTop: 8 }}

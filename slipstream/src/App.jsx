@@ -9,6 +9,7 @@ import { SplitScreen } from './screens/SplitScreen'
 import { ChatListScreen, ChatThreadScreen } from './screens/ChatScreen'
 import { GarageScreen } from './screens/GarageScreen'
 import { ProfileScreen } from './screens/ProfileScreen'
+import { NotificationsScreen } from './screens/NotificationsScreen'
 import { Icon } from './components/Icon'
 
 const TABS = [
@@ -77,6 +78,9 @@ function Shell() {
       break
     case 'profile':
       screen = <ProfileScreen onNavigate={go} />
+      break
+    case 'notifications':
+      screen = <NotificationsScreen onBack={() => go('home')} onOpenRide={(id) => go('ride', { rideId: id })} />
       break
     case 'home':
     default:

@@ -4,8 +4,9 @@ import { handleUpload } from '@vercel/blob/client'
 import { db, uid, now } from '../lib/db.js'
 import { requireAuth } from '../lib/auth.js'
 import { validateName } from '../../src/utils/validate.js'
-import { geocode, drivingRoute, reverseGeocode, sampleRoutePoints } from '../lib/geo.js'
+import { geocode, drivingRoute, sampleRoutePoints, decimate } from '../lib/geo.js'
 import { dayWeather } from '../lib/weather.js'
+import { notifyUsers } from '../lib/notify.js'
 
 const MEMORY_CONTENT_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
@@ -88,6 +89,7 @@ async function serializeRide(ride, viewerId) {
     createdAt: Number(ride.created_at),
     endedAt: ride.ended_at ? Number(ride.ended_at) : null,
     memoryLimit: ride.memory_limit,
+    routePoints: ride.route_points ?? null, // pg parses JSONB back into a JS array already
     members,
     days,
     isLeader: ride.leader_id === viewerId,
@@ -148,6 +150,15 @@ rideRoutes.post('/', async (req, res) => {
   // the leader — this route trusts its shape but not its size.
   const days = Array.isArray(req.body?.days) ? req.body.days.slice(0, MAX_TRIP_DAYS) : []
 
+  // The road the leader picked in the route picker (POST /rides/route-options
+  // output, verbatim) — kept only as [lat,lng] pairs, capped well above what
+  // that endpoint ever actually returns, so a malformed payload can't write
+  // an unbounded blob into the row.
+  const routePointsIn = Array.isArray(req.body?.routePoints) ? req.body.routePoints.slice(0, 300) : []
+  const routePoints = routePointsIn
+    .map((p) => [Number(p?.[0] ?? p?.lat), Number(p?.[1] ?? p?.lng)])
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
+
   const ride = {
     id: uid('rid'),
     name,
@@ -162,18 +173,19 @@ rideRoutes.post('/', async (req, res) => {
     leader_id: leaderId,
     created_by: req.user.id,
     trip_ends_at: tripEndsAt,
+    route_points: routePoints.length ? JSON.stringify(routePoints) : null,
     created_at: now(),
   }
 
   await db.transaction(async (tx) => {
     await tx.prepare(
       `INSERT INTO rides (id, name, description, origin, destination, starts_at, duration_hrs,
-         visibility, status, join_code, leader_id, created_by, trip_ends_at, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         visibility, status, join_code, leader_id, created_by, trip_ends_at, route_points, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       ride.id, ride.name, ride.description, ride.origin, ride.destination, ride.starts_at,
       ride.duration_hrs, ride.visibility, ride.status, ride.join_code, ride.leader_id,
-      ride.created_by, ride.trip_ends_at, ride.created_at,
+      ride.created_by, ride.trip_ends_at, ride.route_points, ride.created_at,
     )
 
     for (const id of memberIds) {
@@ -207,6 +219,16 @@ rideRoutes.post('/', async (req, res) => {
       await tx.prepare('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?)')
         .run(groupId, id, now())
     }
+
+    const others = memberIds.filter((id) => id !== req.user.id)
+    if (others.length) {
+      await notifyUsers(tx, others, {
+        kind: 'ride_invite',
+        title: `You're on ${ride.name}`,
+        body: `${req.user.name} added you to a ride${ride.origin && ride.destination ? ` — ${ride.origin} to ${ride.destination}` : ''}.`,
+        rideId: ride.id,
+      })
+    }
   })()
 
   const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id)
@@ -222,12 +244,22 @@ rideRoutes.post('/join', async (req, res) => {
   if (ride.status === 'ended') return res.status(409).json({ error: 'That ride has already finished' })
 
   await db.transaction(async (tx) => {
-    await tx.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING')
+    const { changes } = await tx.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING')
       .run(ride.id, req.user.id, 'rider', now())
     const group = await tx.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
     if (group) {
       await tx.prepare('INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?,?,?) ON CONFLICT DO NOTHING')
         .run(group.id, req.user.id, now())
+    }
+    // changes is 0 when the rider was already on this ride (ON CONFLICT DO
+    // NOTHING) — nothing new happened, so the leader shouldn't hear about it.
+    if (changes && ride.leader_id !== req.user.id) {
+      await notifyUsers(tx, [ride.leader_id], {
+        kind: 'ride_joined',
+        title: `${req.user.name} joined ${ride.name}`,
+        body: `They used your join code ${ride.join_code}.`,
+        rideId: ride.id,
+      })
     }
   })()
 
@@ -235,30 +267,22 @@ rideRoutes.post('/join', async (req, res) => {
   res.json({ ride: await serializeRide(saved, req.user.id) })
 })
 
+function recommendedDaysFor(durationHours) {
+  return Math.max(1, Math.ceil((durationHours * MOTORCYCLE_PACE_MULTIPLIER) / RIDING_HOURS_PER_DAY))
+}
+
 /**
- * Maps a multi-day trip before the ride exists: geocodes both ends, routes
- * between them, and — for however many days the leader has actually picked —
- * samples that many evenly-spaced stops along the real road, reverse-geocodes
- * each into a place name, and attaches a weather snapshot. Nominatim's ~1/sec
- * limit means this is genuinely slow for a long trip (a 10-day plan makes
- * ~12 sequential geocoding calls) — the caller is expected to show a loading
- * state, not treat this like an autocomplete-speed lookup.
+ * Geocodes both ends of a route and asks OSRM for every distinct road option
+ * between them (there are almost always at least two), so the rider picks
+ * which one this trip actually follows instead of the fastest one being
+ * chosen for them silently. Geometry is thinned before it goes over the
+ * wire — OSRM's raw shape can run to thousands of points for a long trip.
  */
-rideRoutes.post('/plan', async (req, res) => {
+rideRoutes.post('/route-options', async (req, res) => {
   const origin = String(req.body?.origin ?? '').trim()
   const destination = String(req.body?.destination ?? '').trim()
-  const startDate = Number(req.body?.startDate)
-  const endDate = Number(req.body?.endDate)
   if (!origin) return res.status(400).json({ error: 'Where does this ride start?', field: 'origin' })
   if (!destination) return res.status(400).json({ error: 'Where does this ride end?', field: 'destination' })
-  if (!Number.isFinite(startDate) || !Number.isFinite(endDate) || endDate < startDate) {
-    return res.status(400).json({ error: 'Pick a valid start and end date' })
-  }
-
-  const selectedDays = Math.round((endDate - startDate) / 86400000) + 1
-  if (selectedDays > MAX_TRIP_DAYS) {
-    return res.status(400).json({ error: `Trips longer than ${MAX_TRIP_DAYS} days aren't supported yet` })
-  }
 
   try {
     // Sequential, not Promise.all: geocode()'s rate limiter shares one
@@ -269,37 +293,68 @@ rideRoutes.post('/plan', async (req, res) => {
     const destPoint = await geocode(destination)
     if (!destPoint) return res.status(400).json({ error: `Could not find "${destination}" on the map`, field: 'destination' })
 
-    const route = await drivingRoute(originPoint, destPoint)
-    const recommendedDays = Math.max(
-      1, Math.ceil((route.durationHours * MOTORCYCLE_PACE_MULTIPLIER) / RIDING_HOURS_PER_DAY),
-    )
-
-    const stops = sampleRoutePoints(route.points, selectedDays)
-    const days = []
-    for (let i = 0; i < stops.length; i++) {
-      const point = stops[i]
-      const date = startDate + i * 86400000
-      const isLastDay = i === stops.length - 1
-      const place = isLastDay
-        ? destPoint.label.split(',')[0]
-        : (await reverseGeocode(point.lat, point.lng)) || `Day ${i + 1}`
-      const weather = await dayWeather(point.lat, point.lng, date)
-      days.push({ index: i + 1, date, place, lat: point.lat, lng: point.lng, weather })
-    }
+    const routes = await drivingRoute(originPoint, destPoint, { alternatives: true })
 
     res.json({
       origin: { label: originPoint.label.split(',').slice(0, 2).join(','), lat: originPoint.lat, lng: originPoint.lng },
       destination: { label: destPoint.label.split(',').slice(0, 2).join(','), lat: destPoint.lat, lng: destPoint.lng },
-      distanceKm: Math.round(route.distanceKm),
-      drivingHours: Math.round(route.durationHours * 10) / 10,
-      recommendedDays,
-      selectedDays,
-      tooShort: selectedDays < recommendedDays,
-      days,
+      routes: routes.slice(0, 3).map((route) => ({
+        distanceKm: Math.round(route.distanceKm),
+        durationHours: Math.round(route.durationHours * 10) / 10,
+        recommendedDays: recommendedDaysFor(route.durationHours),
+        points: decimate(route.points, 150).map((p) => [Math.round(p.lat * 1e5) / 1e5, Math.round(p.lng * 1e5) / 1e5]),
+      })),
     })
   } catch (err) {
-    res.status(502).json({ error: err.message || 'Could not plan that route right now — try again in a moment' })
+    res.status(502).json({ error: err.message || 'Could not map that route right now — try again in a moment' })
   }
+})
+
+/**
+ * Turns a start/end date into an empty day-by-day skeleton for the leader to
+ * fill in themselves — this never invents stop names. When the leader has
+ * already picked a route (distanceKm/durationHours/points, from
+ * POST /route-options), each day also gets a weather snapshot sampled along
+ * that actual road; without one, days come back with no weather rather than
+ * failing, since the plan is still useful without it.
+ */
+rideRoutes.post('/plan', async (req, res) => {
+  const startDate = Number(req.body?.startDate)
+  const endDate = Number(req.body?.endDate)
+  if (!Number.isFinite(startDate) || !Number.isFinite(endDate) || endDate < startDate) {
+    return res.status(400).json({ error: 'Pick a valid start and end date' })
+  }
+
+  const selectedDays = Math.round((endDate - startDate) / 86400000) + 1
+  if (selectedDays > MAX_TRIP_DAYS) {
+    return res.status(400).json({ error: `Trips longer than ${MAX_TRIP_DAYS} days aren't supported yet` })
+  }
+
+  const durationHours = Number(req.body?.durationHours)
+  const hasRoute = Number.isFinite(durationHours) && durationHours > 0
+  const recommendedDays = hasRoute ? recommendedDaysFor(durationHours) : null
+
+  const points = Array.isArray(req.body?.points)
+    ? req.body.points
+      .map((p) => ({ lat: Number(p?.lat ?? p?.[0]), lng: Number(p?.lng ?? p?.[1]) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    : []
+  const stops = points.length ? sampleRoutePoints(points, selectedDays) : []
+
+  const days = await Promise.all(Array.from({ length: selectedDays }, async (_, i) => {
+    const date = startDate + i * 86400000
+    const weather = stops[i] ? await dayWeather(stops[i].lat, stops[i].lng, date) : null
+    return { index: i + 1, date, weather }
+  }))
+
+  res.json({
+    selectedDays,
+    recommendedDays,
+    tooShort: recommendedDays != null && selectedDays < recommendedDays,
+    distanceKm: Number.isFinite(Number(req.body?.distanceKm)) ? Math.round(Number(req.body.distanceKm)) : null,
+    drivingHours: hasRoute ? Math.round(durationHours * 10) / 10 : null,
+    days,
+  })
 })
 
 async function loadRide(req, res, next) {
@@ -364,6 +419,24 @@ rideRoutes.post('/:id/location', loadRide, async (req, res) => {
       .run(req.ride.id, req.user.id, lat, lng, now())
   }
   res.status(204).end()
+})
+
+// The SOS button broadcasts a real notification to the rest of the ride
+// rather than the purely local "sent" state it used to show — the leader
+// tapping it needs the group to actually be reached, not just told they were.
+rideRoutes.post('/:id/sos', loadRide, async (req, res) => {
+  const others = (await db.prepare('SELECT user_id FROM ride_members WHERE ride_id = ? AND user_id != ?')
+    .all(req.ride.id, req.user.id)).map((r) => r.user_id)
+
+  if (others.length) {
+    await notifyUsers(db, others, {
+      kind: 'sos',
+      title: `🆘 SOS from ${req.user.name}`,
+      body: `${req.user.name} triggered an SOS during ${req.ride.name}. Reach out to them now.`,
+      rideId: req.ride.id,
+    })
+  }
+  res.json({ ok: true, notified: others.length })
 })
 
 /**

@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS rides (
   fuel_cost    INTEGER,
   memory_limit INTEGER NOT NULL DEFAULT 10,
   trip_ends_at BIGINT,
+  route_points JSONB,
   created_at   BIGINT NOT NULL,
   ended_at     BIGINT
 );
@@ -138,6 +139,11 @@ ALTER TABLE rides ADD COLUMN IF NOT EXISTS memory_limit INTEGER NOT NULL DEFAULT
 -- is when the leader actually taps "End" — a trip can run short or long of
 -- its plan, and the two must never collide.
 ALTER TABLE rides ADD COLUMN IF NOT EXISTS trip_ends_at BIGINT;
+-- The road the leader actually picked in the route picker (POST
+-- /rides/route-options), as [[lat,lng], ...] — drawn on the live ride map
+-- underneath the rider pins so the group can see the planned line, not just
+-- where everyone currently is.
+ALTER TABLE rides ADD COLUMN IF NOT EXISTS route_points JSONB;
 
 CREATE TABLE IF NOT EXISTS ride_members (
   ride_id   TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -296,12 +302,14 @@ CREATE TABLE IF NOT EXISTS vehicles (
 CREATE TABLE IF NOT EXISTS notifications (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ride_id    TEXT REFERENCES rides(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL DEFAULT 'system',
   title      TEXT NOT NULL,
   body       TEXT,
   read_at    BIGINT,
   created_at BIGINT NOT NULL
 );
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS ride_id TEXT REFERENCES rides(id) ON DELETE CASCADE;
 
 -- OTPs used to live in an in-memory Map. Serverless has no shared memory
 -- across invocations, so they now live here with a real expiry column.

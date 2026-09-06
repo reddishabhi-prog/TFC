@@ -30,10 +30,11 @@ function pinIcon(member, isYou) {
  *  in place as fresh coordinates arrive instead of re-mounting the map.
  *  Exposes recenter() via ref for a manual "back to the group" control, since
  *  auto-fit deliberately stops fighting the user after the first frame. */
-export const RideMap = forwardRef(function RideMap({ members, youId }, ref) {
+export const RideMap = forwardRef(function RideMap({ members, youId, routePoints }, ref) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
+  const routeLineRef = useRef(null)
   const membersRef = useRef(members)
   membersRef.current = members
   // Riders already framed at least once. Position updates land every poll —
@@ -59,9 +60,24 @@ export const RideMap = forwardRef(function RideMap({ members, youId }, ref) {
     mapRef.current = map
     return () => {
       map.remove(); mapRef.current = null
-      markersRef.current = new Map(); framedRef.current = new Set()
+      markersRef.current = new Map(); framedRef.current = new Set(); routeLineRef.current = null
     }
   }, [])
+
+  // The road the leader picked at ride creation, if any — drawn once beneath
+  // the rider pins so the group can see the planned line, not just where
+  // everyone currently is. Rides created before this feature simply have none.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !Array.isArray(routePoints) || !routePoints.length) return
+    const line = L.polyline(routePoints, { color: '#e8562b', weight: 4, opacity: 0.55 }).addTo(map)
+    routeLineRef.current = line
+    if (!members.some((m) => typeof m.lat === 'number')) {
+      map.fitBounds(line.getBounds().pad(0.12))
+    }
+    return () => line.remove()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routePoints])
 
   useEffect(() => {
     const map = mapRef.current

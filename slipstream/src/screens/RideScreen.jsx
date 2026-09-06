@@ -24,8 +24,10 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [sos, setSos] = useState('idle')
+  const [sosBusy, setSosBusy] = useState(false)
   const [view, setView] = useState('map')
   const [shareCard, setShareCard] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
   const mapRef = useRef(null)
 
   useEffect(() => {
@@ -123,30 +125,84 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       </div>
 
       {view === 'map' ? (
-        <div className="ride-map">
-          <RideMap ref={mapRef} members={ride.members} youId={user.id} />
+        <div className="ride-map-view">
+          <div className="ride-map">
+            <RideMap ref={mapRef} members={ride.members} youId={user.id} routePoints={ride.routePoints} />
 
-          {(ride.origin || ride.destination) && (
-            <div className="route-banner">
-              {ride.origin || 'Start'} <Icon name="arrowLeft" size={12} style={{ transform: 'rotate(180deg)' }} /> {ride.destination || 'Finish'}
-            </div>
-          )}
+            {(ride.origin || ride.destination) && (
+              <div className="route-banner">
+                {ride.origin || 'Start'} <Icon name="arrowLeft" size={12} style={{ transform: 'rotate(180deg)' }} /> {ride.destination || 'Finish'}
+              </div>
+            )}
 
-          {!ride.members.some((m) => typeof m.lat === 'number') && (
-            <div className="map-hint">Waiting for riders to share their location…</div>
-          )}
+            {!ride.members.some((m) => typeof m.lat === 'number') && (
+              <div className="map-hint">Waiting for riders to share their location…</div>
+            )}
 
-          {ride.members.some((m) => typeof m.lat === 'number') && (
-            <button className="map-recenter" onClick={() => mapRef.current?.recenter()} aria-label="Recenter on the group">
-              <Icon name="locate" size={19} />
+            {ride.members.some((m) => typeof m.lat === 'number') && (
+              <button className="map-recenter" onClick={() => mapRef.current?.recenter()} aria-label="Recenter on the group">
+                <Icon name="locate" size={19} />
+              </button>
+            )}
+
+            {!ended && (
+              sos === 'sent'
+                ? <div className="sos-sent">🆘 SOS sent</div>
+                : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
+            )}
+          </div>
+
+          <div className={`ride-sheet ${sheetOpen ? 'expanded' : ''}`}>
+            <button className="sheet-handle" onClick={() => setSheetOpen((v) => !v)}
+                    aria-expanded={sheetOpen} aria-label={sheetOpen ? 'Collapse ride details' : 'Expand ride details'}>
+              <span className="sheet-handle-bar" />
             </button>
-          )}
 
-          {!ended && (
-            sos === 'sent'
-              ? <div className="sos-sent">🆘 SOS sent</div>
-              : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
-          )}
+            <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>
+              <span className="join-code-value mono">{ride.joinCode}</span>
+              <span className="join-code-hint">{copied ? 'Copied ✓' : 'Tap to copy · share with riders'}</span>
+              <Icon name="copy" size={17} />
+            </button>
+
+            {ended && (
+              <Button variant="primary" size="lg" block icon="trophy"
+                      style={{ marginTop: 'var(--sp-3)' }} onClick={() => setShareCard(true)}>
+                Share your ride card
+              </Button>
+            )}
+
+            <div className="row" style={{ gap: 8, marginTop: 'var(--sp-3)' }}>
+              <Button block icon="split" onClick={() => onOpenSplit(ride.groupId)}>Split</Button>
+              {!ended && (
+                <>
+                  <Button block icon={ride.status === 'paused' ? 'play' : 'pause'} loading={busy}
+                          onClick={() => update({ status: ride.status === 'paused' ? 'live' : 'paused' })}>
+                    {ride.status === 'paused' ? 'Resume' : 'Pause'}
+                  </Button>
+                  <Button variant="primary" block icon="stop"
+                          onClick={() => setConfirm({ kind: 'end' })}>End</Button>
+                </>
+              )}
+            </div>
+
+            <div className="section" style={{ padding: 'var(--sp-5) 0 0' }}>
+              <div className="section-title">Riders</div>
+              <div className="stack" style={{ gap: 6 }}>
+                {ride.members.map((m) => (
+                  <div className="list-row" key={m.id}>
+                    <Avatar name={m.name} color={m.avatarColor} size="sm" />
+                    <span className="grow">
+                      <span className="list-row-title">
+                        {m.name}{m.id === user.id ? ' (you)' : ''}
+                      </span>
+                      <span className="list-row-sub">{dateTimeLabel(ride.startsAt)}</span>
+                    </span>
+                    {m.id === ride.leaderId && <Pill tone="brand">Leader</Pill>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       ) : view === 'checklist' ? (
         <RideChecklist ride={ride} />
@@ -154,55 +210,6 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
         <RideItinerary ride={ride} />
       ) : (
         <RideMemories ride={ride} onRideUpdated={setRide} />
-      )}
-
-      {view === 'map' && (
-        <div className="ride-sheet">
-          <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>
-            <span className="join-code-value mono">{ride.joinCode}</span>
-            <span className="join-code-hint">{copied ? 'Copied ✓' : 'Tap to copy · share with riders'}</span>
-            <Icon name="copy" size={17} />
-          </button>
-
-          {ended && (
-            <Button variant="primary" size="lg" block icon="trophy"
-                    style={{ marginTop: 'var(--sp-3)' }} onClick={() => setShareCard(true)}>
-              Share your ride card
-            </Button>
-          )}
-
-          <div className="row" style={{ gap: 8, marginTop: 'var(--sp-3)' }}>
-            <Button block icon="split" onClick={() => onOpenSplit(ride.groupId)}>Split</Button>
-            {!ended && (
-              <>
-                <Button block icon={ride.status === 'paused' ? 'play' : 'pause'} loading={busy}
-                        onClick={() => update({ status: ride.status === 'paused' ? 'live' : 'paused' })}>
-                  {ride.status === 'paused' ? 'Resume' : 'Pause'}
-                </Button>
-                <Button variant="primary" block icon="stop"
-                        onClick={() => setConfirm({ kind: 'end' })}>End</Button>
-              </>
-            )}
-          </div>
-
-          <div className="section" style={{ padding: 'var(--sp-5) 0 0' }}>
-            <div className="section-title">Riders</div>
-            <div className="stack" style={{ gap: 6 }}>
-              {ride.members.map((m) => (
-                <div className="list-row" key={m.id}>
-                  <Avatar name={m.name} color={m.avatarColor} size="sm" />
-                  <span className="grow">
-                    <span className="list-row-title">
-                      {m.name}{m.id === user.id ? ' (you)' : ''}
-                    </span>
-                    <span className="list-row-sub">{dateTimeLabel(ride.startsAt)}</span>
-                  </span>
-                  {m.id === ride.leaderId && <Pill tone="brand">Leader</Pill>}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
       )}
 
       <ConfirmDialog
@@ -221,11 +228,24 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       <ConfirmDialog
         open={confirm?.kind === 'sos'}
         title="Send SOS?"
-        body="Your live location is shared with the group and your emergency contact immediately."
+        body="Every other rider on this ride gets an immediate notification with your name and the ride."
         confirmLabel="Send SOS"
         variant="danger"
+        busy={sosBusy}
         onCancel={() => setConfirm(null)}
-        onConfirm={() => { setSos('sent'); setConfirm(null); toast.error('SOS broadcast to your group') }}
+        onConfirm={async () => {
+          setSosBusy(true)
+          try {
+            await Api.sendSos(rideId)
+            setSos('sent')
+            setConfirm(null)
+            toast.error('SOS broadcast to your group')
+          } catch (e) {
+            toast.error(e)
+          } finally {
+            setSosBusy(false)
+          }
+        }}
       />
 
       {shareCard && <RideShareCard ride={ride} onClose={() => setShareCard(false)} />}

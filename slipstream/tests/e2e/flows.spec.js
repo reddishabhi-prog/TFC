@@ -47,6 +47,9 @@ test.describe('Rides', () => {
   test('ending a ride asks for confirmation first', async ({ page }) => {
     await signUp(page, { phone: freshPhone(), name: 'Ender' })
     await startRide(page)
+    // The action row lives in the collapsible bottom sheet, which starts
+    // peeked so the map gets the full screen by default.
+    await page.locator('.sheet-handle').click()
     await page.getByRole('button', { name: /^End$/ }).click()
     await expect(page.getByText('End this ride?')).toBeVisible()
     await page.getByRole('button', { name: /Keep riding/i }).click()
@@ -79,6 +82,36 @@ test.describe('Riders', () => {
     await expect(waLink).toHaveAttribute('href', new RegExp(`wa\\.me/91${friendPhone}\\?text=`))
     // The invited friend shows up as a removable chip alongside the leader.
     await expect(page.locator('.rider-chip-name', { hasText: 'Friend Rider' })).toBeVisible()
+  })
+})
+
+test.describe('Notifications', () => {
+  test('an SOS broadcast notifies the other rider on the ride', async ({ page, browser }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Leader Lee' })
+    await startRide(page, { name: 'Notify Run' })
+    const code = await page.locator('.join-code-value').innerText()
+
+    const context2 = await browser.newContext()
+    const page2 = await context2.newPage()
+    try {
+      await signUp(page2, { phone: freshPhone(), name: 'Rider Ray' })
+      await page2.getByLabel('Six letter join code').fill(code)
+      await page2.getByRole('button', { name: /^Join$/ }).click()
+      await page2.locator('.join-code-value').waitFor()
+
+      await page.locator('.sos-btn').click()
+      await page.locator('.dialog').getByRole('button', { name: /Send SOS/i }).click()
+      await expect(page.locator('.sos-sent')).toBeVisible()
+
+      // A reload simulates reopening the app — that's when the unread badge
+      // and the notification itself should actually be there for Ray.
+      await page2.reload()
+      await expect(page2.locator('.bell-badge')).toBeVisible()
+      await page2.getByRole('button', { name: 'Notifications' }).click()
+      await expect(page2.getByText(/SOS from Leader Lee/i)).toBeVisible()
+    } finally {
+      await context2.close()
+    }
   })
 })
 
@@ -274,17 +307,18 @@ test.describe('Chat', () => {
 })
 
 test.describe('Multi-day trip planning', () => {
-  // Planning a real route needs Nominatim/OSRM/Open-Meteo, which this suite
-  // has no network access to — so this covers what's reachable without them:
-  // the end-date field staying opt-in, and a network failure surfacing a
-  // real message instead of hanging or crashing the plan request.
+  // Planning a real route needs Nominatim/OSRM, which this suite has no
+  // network access to — so this covers what's reachable without them: day
+  // slots appearing immediately for the leader to fill in themselves (never
+  // auto-filled), and a route lookup failure surfacing a real message
+  // instead of hanging.
   test('a same-day ride has no end date or Plan tab by default', async ({ page }) => {
     await signUp(page, { phone: freshPhone(), name: 'Day Tripper' })
     await startRide(page, { name: 'Evening Loop' })
     await expect(page.locator('.ride-view-toggle').getByRole('button', { name: 'Plan' })).toHaveCount(0)
   })
 
-  test('setting a trip end date reveals planning, and a failed lookup shows a real error', async ({ page }) => {
+  test('an end date gives one editable slot per day with nothing auto-filled', async ({ page }) => {
     await signUp(page, { phone: freshPhone(), name: 'Trip Planner' })
     await page.getByRole('button', { name: /Start a ride/i }).click()
     await page.locator('#ride-name').waitFor()
@@ -292,14 +326,30 @@ test.describe('Multi-day trip planning', () => {
     await page.locator('#ride-from').fill('Jaipur')
     await page.locator('#ride-to').fill('Leh')
 
-    await expect(page.getByRole('button', { name: /Plan this route/i })).toHaveCount(0)
-
     const endDate = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10)
     await page.locator('#ride-end-date').fill(endDate)
 
-    const planButton = page.getByRole('button', { name: /Plan this route — 6 days/i })
-    await expect(planButton).toBeVisible()
-    await planButton.click()
+    await expect(page.getByText('6-day plan')).toBeVisible()
+    await expect(page.locator('.trip-day')).toHaveCount(6)
+
+    const day1Place = page.locator('.trip-day').first().getByPlaceholder(/Where are you stopping/)
+    await expect(day1Place).toHaveValue('')
+    await day1Place.fill('Bikaner')
+    await expect(day1Place).toHaveValue('Bikaner')
+
+    // Weather needs a chosen route first — it never invents one on its own.
+    await expect(page.getByRole('button', { name: /Check weather/i })).toBeDisabled()
+  })
+
+  test('finding routes surfaces a real error when the lookup fails', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'Route Finder' })
+    await page.getByRole('button', { name: /Start a ride/i }).click()
+    await page.locator('#ride-name').waitFor()
+    await page.locator('#ride-name').fill('Jaipur to Leh')
+    await page.locator('#ride-from').fill('Jaipur')
+    await page.locator('#ride-to').fill('Leh')
+
+    await page.getByRole('button', { name: /^Find routes$/ }).click()
     await expect(page.locator('.field-error')).toBeVisible({ timeout: 15000 })
   })
 })
