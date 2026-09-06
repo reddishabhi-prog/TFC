@@ -845,6 +845,27 @@ button.hero-card { display: block; width: 100%; text-align: left; }
    Create ride
    ========================================================================== */
 
+/* A question, not a form title — matches the tone the rest of the flow's
+   copy already leans on ("Rolls out", "hop on") rather than a flat "New
+   ride" label sitting alone in the app bar. */
+.create-ride-intro { padding: var(--sp-2) 0 var(--sp-5); }
+.create-ride-eyebrow {
+  display: inline-flex; align-items: center;
+  font-size: var(--fs-2xs); font-weight: var(--fw-heavy);
+  letter-spacing: var(--tracking-wider); text-transform: uppercase;
+  color: var(--brand-700);
+}
+.eyebrow-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--brand-500); margin-right: 7px;
+}
+.create-ride-title {
+  font-size: var(--fs-h1); font-weight: var(--fw-heavy);
+  letter-spacing: var(--tracking-tight); color: var(--text-strong);
+  line-height: 1.1; margin-top: var(--sp-2); text-wrap: balance;
+}
+.create-ride-sub { color: var(--text-muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
+
 .link-btn {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--brand-500); font-size: var(--fs-xs); font-weight: var(--fw-strong);
