@@ -97,14 +97,16 @@ export function ChipGroup({ options, value, onChange, label, multiple = false })
 
 /* ----------------------------------------------------------------- Avatars */
 
-export function Avatar({ name, color, size = 'sm' }) {
+export function Avatar({ name, color, avatarUrl, size = 'sm' }) {
   const letters = String(name ?? '?').trim().split(/\s+/).filter(Boolean)
   const text = letters.length > 1
     ? (letters[0][0] + letters[letters.length - 1][0]).toUpperCase()
     : (letters[0] || '?').slice(0, 2).toUpperCase()
   return (
-    <span className={`avatar avatar-${size}`} style={color ? { background: color } : undefined} aria-hidden="true">
-      {text}
+    <span className={`avatar avatar-${size}`} style={!avatarUrl && color ? { background: color } : undefined} aria-hidden="true">
+      {avatarUrl
+        ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : text}
     </span>
   )
 }

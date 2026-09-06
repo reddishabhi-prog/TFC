@@ -18,6 +18,7 @@ const ChatThreadScreen = lazy(() => import('./screens/ChatScreen').then((m) => (
 const GarageScreen = lazy(() => import('./screens/GarageScreen').then((m) => ({ default: m.GarageScreen })))
 const ProfileScreen = lazy(() => import('./screens/ProfileScreen').then((m) => ({ default: m.ProfileScreen })))
 const NotificationsScreen = lazy(() => import('./screens/NotificationsScreen').then((m) => ({ default: m.NotificationsScreen })))
+const HelpScreen = lazy(() => import('./screens/HelpScreen').then((m) => ({ default: m.HelpScreen })))
 
 function ScreenFallback() {
   return (
@@ -90,6 +91,9 @@ function Shell() {
       break
     case 'garage':
       screen = <GarageScreen onBack={() => go('profile')} />
+      break
+    case 'help':
+      screen = <HelpScreen onBack={() => go('profile')} />
       break
     case 'profile':
       screen = <ProfileScreen onNavigate={go} />

@@ -45,6 +45,7 @@ export function publicUser(row) {
     phone: row.phone,
     email: row.email,
     avatarColor: row.avatar_color,
+    avatarUrl: row.avatar_url,
     bloodGroup: row.blood_group,
     medicalNotes: row.medical_notes,
     emergencyContact: row.emergency_name

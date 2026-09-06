@@ -104,12 +104,15 @@ CREATE TABLE IF NOT EXISTS users (
   email         TEXT UNIQUE,
   password_hash TEXT,
   avatar_color  TEXT,
+  avatar_url    TEXT,
   blood_group   TEXT,
   medical_notes TEXT,
   emergency_name   TEXT,
   emergency_phone  TEXT,
   created_at    BIGINT NOT NULL
 );
+-- Cropped-square profile photo, uploaded via POST /users/me/avatar-upload.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 CREATE TABLE IF NOT EXISTS rides (
   id           TEXT PRIMARY KEY,

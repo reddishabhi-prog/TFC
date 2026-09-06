@@ -1,10 +1,11 @@
-import { useState } from 'react'
-import { Api } from '../services/api'
+import { useRef, useState } from 'react'
+import { Api, getToken } from '../services/api'
 import { useAuth, useTheme, useToast } from '../context/AppContext'
 import { Button, Field, TextInput, Segmented, ConfirmDialog, Avatar } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { RiderBadges } from '../components/RiderBadges'
 import { validateName, validateEmail, validatePhone, digitsOnly } from '../utils/validate'
+import { cropToSquare } from '../utils/cropImage'
 
 const BLOOD_GROUPS = ['', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
 
@@ -12,6 +13,7 @@ export function ProfileScreen({ onNavigate }) {
   const { user, setUser, logout } = useAuth()
   const { theme, setTheme } = useTheme()
   const toast = useToast()
+  const photoRef = useRef(null)
 
   const [values, setValues] = useState({
     name: user.name ?? '',
@@ -24,6 +26,38 @@ export function ProfileScreen({ onNavigate }) {
   const [errors, setErrors] = useState({})
   const [busy, setBusy] = useState(false)
   const [confirmOut, setConfirmOut] = useState(false)
+  const [photoBusy, setPhotoBusy] = useState(false)
+
+  /** Crops to a square client-side, then uploads that square — no manual
+   *  crop step for a rider to fumble through on a bike glove. */
+  async function changePhoto(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setPhotoBusy(true)
+    try {
+      const square = await cropToSquare(file)
+      // Loaded on demand, same reasoning as the ride-memories upload: this
+      // SDK's dependency chain has no business loading for anyone who never
+      // touches their profile photo.
+      const { upload } = await import('@vercel/blob/client')
+      const blob = await upload(`avatars/${user.id}-${Date.now()}.jpg`, square, {
+        access: 'public',
+        handleUploadUrl: Api.avatarUploadUrl(),
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
+      const { user: saved } = await Api.updateMe({ avatarUrl: blob.url })
+      setUser(saved)
+      toast.success('Profile photo updated')
+    } catch (err) {
+      const raw = err?.message || ''
+      toast.error(/retrieve the client token/i.test(raw)
+        ? "Couldn't upload that photo — photo storage may not be set up yet."
+        : raw || 'Could not update your photo — try again')
+    } finally {
+      setPhotoBusy(false)
+    }
+  }
 
   const set = (key, value) => { setValues((v) => ({ ...v, [key]: value })); setErrors((e) => ({ ...e, [key]: undefined })) }
 
@@ -69,7 +103,14 @@ export function ProfileScreen({ onNavigate }) {
       <div className="screen-scroll">
         <div className="pad">
           <div className="profile-hero">
-            <Avatar name={user.name} color={user.avatarColor} size="lg" />
+            <div className="profile-photo">
+              <Avatar name={user.name} color={user.avatarColor} avatarUrl={user.avatarUrl} size="lg" />
+              <button className="profile-photo-edit" onClick={() => photoRef.current?.click()}
+                      disabled={photoBusy} aria-label="Change profile photo">
+                <Icon name={photoBusy ? 'clock' : 'camera'} size={14} />
+              </button>
+              <input ref={photoRef} className="profile-photo-input" type="file" accept="image/*" hidden onChange={changePhoto} />
+            </div>
             <div className="profile-name">{user.name}</div>
             <div className="caption">{user.phone ? `+91 ${user.phone}` : user.email}</div>
           </div>

@@ -317,6 +317,16 @@ test.describe('Profile & settings', () => {
     await expect(page.locator('#p-ephone-error')).toBeVisible()
   })
 
+  test('picking a profile photo crops it and reaches the upload endpoint', async ({ page }) => {
+    // This test environment has no BLOB_READ_WRITE_TOKEN configured, so the
+    // upload can't complete end-to-end — but that's a deterministic, testable
+    // path in its own right: it proves the picker, client-side crop, and the
+    // call all the way to /users/me/avatar-upload actually wire up, and that
+    // a real person sees a clear reason rather than a silent failure.
+    await page.setInputFiles('.profile-photo-input', 'public/icon-512.png')
+    await expect(page.getByText(/photo storage may not be set up yet/i)).toBeVisible()
+  })
+
   test('appearance offers light and dark only', async ({ page }) => {
     // Target the control by its accessible name — picking it positionally
     // ("the last .segmented") depends on render order and is flaky.
@@ -332,6 +342,24 @@ test.describe('Profile & settings', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await page.reload()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  })
+})
+
+test.describe('Help & support', () => {
+  test('opens from Profile, answers expand, and offers an email contact', async ({ page }) => {
+    // Regression coverage: "Help & support" already linked to onNavigate('help')
+    // before this screen existed, so tapping it silently fell through to Home.
+    await signUp(page, { phone: freshPhone(), name: 'Help Seeker' })
+    await page.locator('.tab-bar').getByRole('button', { name: 'Me', exact: true }).click()
+    await page.getByText('Help & support').click()
+
+    await expect(page.getByText('FAQs and contact')).toBeVisible()
+    await expect(page.getByRole('link', { name: /Email us/i })).toHaveAttribute('href', /^mailto:/)
+
+    const question = page.getByText('How do I start a ride?')
+    await expect(question).toBeVisible()
+    await question.click()
+    await expect(page.getByText(/join code to share with the group/i)).toBeVisible()
   })
 })
 

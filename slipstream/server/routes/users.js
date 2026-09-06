@@ -1,11 +1,45 @@
 import { Router } from 'express'
+import { del } from '@vercel/blob'
+import { handleUpload } from '@vercel/blob/client'
 import { db, uid, now } from '../lib/db.js'
 import { requireAuth, publicUser } from '../lib/auth.js'
 import { riderStats, gradeBadges } from '../lib/badges.js'
 import { validatePhone, validateEmail, validateName, PHONE_RE } from '../../src/utils/validate.js'
 
+const AVATAR_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+// The client crops to a fixed square before uploading, so a real photo never
+// approaches this — it only guards against something bypassing that step.
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024
+
 export const userRoutes = Router()
 userRoutes.use(requireAuth)
+
+// Client-upload handshake, same shape as the ride-memories one: the browser
+// uploads the (already cropped) image straight to Blob storage using a
+// short-lived token minted here, rather than through this server.
+userRoutes.post('/me/avatar-upload', async (req, res) => {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[slipstream] BLOB_READ_WRITE_TOKEN is not set for this deployment')
+    return res.status(503).json({
+      error: 'Photo storage is not configured yet. Connect a Vercel Blob store to this project.',
+    })
+  }
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async () => ({
+        allowedContentTypes: AVATAR_CONTENT_TYPES,
+        maximumSizeInBytes: AVATAR_MAX_BYTES,
+        addRandomSuffix: true,
+      }),
+    })
+    res.json(jsonResponse)
+  } catch (err) {
+    console.error('[slipstream] avatar-upload failed:', err?.message, err)
+    res.status(400).json({ error: err.message })
+  }
+})
 
 userRoutes.get('/me/badges', async (req, res) => {
   const stats = await riderStats(req.user.id)
@@ -107,11 +141,18 @@ userRoutes.patch('/me', async (req, res) => {
     emergency_phone: b.emergencyPhone !== undefined
       ? (String(b.emergencyPhone).replace(/\D/g, '') || null)
       : req.user.emergency_phone,
+    avatar_url: b.avatarUrl !== undefined ? (b.avatarUrl || null) : req.user.avatar_url,
   }
 
   await db.prepare(
-    `UPDATE users SET name=?, email=?, blood_group=?, medical_notes=?, emergency_name=?, emergency_phone=? WHERE id=?`,
-  ).run(next.name, next.email, next.blood_group, next.medical_notes, next.emergency_name, next.emergency_phone, req.user.id)
+    `UPDATE users SET name=?, email=?, blood_group=?, medical_notes=?, emergency_name=?, emergency_phone=?, avatar_url=? WHERE id=?`,
+  ).run(next.name, next.email, next.blood_group, next.medical_notes, next.emergency_name, next.emergency_phone, next.avatar_url, req.user.id)
+
+  // Best-effort: an old photo replaced or removed has no reason to keep
+  // billing storage once nothing references it any more.
+  if (b.avatarUrl !== undefined && req.user.avatar_url && req.user.avatar_url !== next.avatar_url) {
+    del(req.user.avatar_url).catch(() => {})
+  }
 
   const saved = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)
   res.json({ user: publicUser(saved) })

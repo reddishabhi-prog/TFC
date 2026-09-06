@@ -72,6 +72,9 @@ export const Api = {
   searchUsers: (q, opts) => api.get(`/users/search?q=${encodeURIComponent(q)}`, opts),
   inviteUser: (payload) => api.post('/users/invite', payload),
   updateMe: (payload) => api.patch('/users/me', payload),
+  // Not a request — @vercel/blob's upload() calls this URL itself for the
+  // token handshake, so the component only needs the address, not a wrapper.
+  avatarUploadUrl: () => `${BASE}/users/me/avatar-upload`,
 
   rides: () => api.get('/rides'),
   ride: (id) => api.get(`/rides/${id}`),
