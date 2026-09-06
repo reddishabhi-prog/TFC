@@ -299,6 +299,19 @@ CREATE TABLE IF NOT EXISTS ride_stops (
   created_at BIGINT NOT NULL
 );
 
+-- One row per device a user has granted browser push permission on — a
+-- rider can have several (phone + laptop). endpoint is unique because it's
+-- how the browser's own push service identifies that registration; the
+-- upsert on it makes re-subscribing (a token refresh) idempotent.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS vehicles (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -347,5 +360,6 @@ CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 `)
 }

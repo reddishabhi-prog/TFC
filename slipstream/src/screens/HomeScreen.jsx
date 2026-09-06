@@ -69,20 +69,20 @@ export function HomeScreen({ onNavigate, onOpenRide }) {
         <div className="pad">
           {live ? (
             <button className="hero-card live-hero" onClick={() => onOpenRide(live.id)}>
-              <div className="row-between">
-                <span className="hero-eyebrow">
-                  <span className="live-dot" /> {live.status === 'paused' ? 'Paused' : 'Live now'}
-                </span>
-                <AvatarStack people={live.members} />
-              </div>
-              <div className="hero-title">{live.name}</div>
-              <div className="hero-body">
-                {live.destination ? `Heading to ${live.destination}` : 'Tracking your pack'} ·{' '}
-                {live.members.length} rider{live.members.length === 1 ? '' : 's'}
-              </div>
-              <span className="btn btn-primary" style={{ marginTop: 'var(--sp-4)' }}>
-                <Icon name="arrowRight" size={17} /> Back to the ride
+              <span className="hero-eyebrow">
+                <span className="live-dot" /> {live.status === 'paused' ? 'Paused' : 'Active ride'}
               </span>
+              <div className="hero-title">{live.name}</div>
+              <div className="hero-meta">
+                {live.members.length} rider{live.members.length === 1 ? '' : 's'}
+                {live.destination && ` · Heading to ${live.destination}`}
+              </div>
+              <div className="row-between" style={{ marginTop: 'var(--sp-4)' }}>
+                <AvatarStack people={live.members} />
+                <span className="btn btn-primary btn-sm">
+                  <Icon name="arrowRight" size={15} /> Open
+                </span>
+              </div>
             </button>
           ) : (
             <div className="hero-card">

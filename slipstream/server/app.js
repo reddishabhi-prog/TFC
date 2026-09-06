@@ -13,7 +13,7 @@ import { authRoutes } from './routes/auth.js'
 import { userRoutes } from './routes/users.js'
 import { rideRoutes } from './routes/rides.js'
 import { groupRoutes } from './routes/groups.js'
-import { chatRoutes, garageRoutes, notificationRoutes } from './routes/misc.js'
+import { chatRoutes, garageRoutes, notificationRoutes, pushRoutes } from './routes/misc.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -31,6 +31,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, at: Date.now() }))
 app.get('/api/health/config', (_req, res) => {
   const names = [
     'DATABASE_URL', 'JWT_SECRET', 'BLOB_READ_WRITE_TOKEN', 'BLOB_STORE_ID', 'SMS_PROVIDER_URL',
+    'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY',
   ]
   res.json({
     vercelEnv: process.env.VERCEL_ENV ?? null,
@@ -44,6 +45,7 @@ app.use('/api/groups', groupRoutes)
 app.use('/api/chat', chatRoutes)
 app.use('/api/garage', garageRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/push', pushRoutes)
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'No such endpoint' }))
 

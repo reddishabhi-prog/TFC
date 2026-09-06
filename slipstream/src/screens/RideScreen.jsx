@@ -68,7 +68,13 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   // Share this device's own GPS position while the ride is live. Paused/ended
   // rides, or a rider who never granted location permission, simply show
   // everyone else without a pin of their own.
+  //
+  // A read that fails to reach the server (a highway dead zone) is queued
+  // rather than dropped, and sent along with the next successful push — so a
+  // few minutes of bad signal costs a delayed update, not a gap in the
+  // breadcrumb trail the eventual share card draws from.
   const deniedRef = useRef(false)
+  const pendingRef = useRef([])
   useEffect(() => {
     if (!ride || ride.status !== 'live' || !('geolocation' in navigator)) return
     deniedRef.current = false
@@ -76,7 +82,11 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       if (deniedRef.current) return
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          Api.updateLocation(rideId, { lat: pos.coords.latitude, lng: pos.coords.longitude }).catch(() => {})
+          const point = { lat: pos.coords.latitude, lng: pos.coords.longitude, at: Date.now() }
+          const batch = [...pendingRef.current, point].slice(-30)
+          Api.updateLocation(rideId, { points: batch })
+            .then(() => { pendingRef.current = [] })
+            .catch(() => { pendingRef.current = batch })
         },
         (err) => { if (err.code === err.PERMISSION_DENIED) deniedRef.current = true },
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 },
@@ -84,7 +94,11 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
     }
     pushLocation()
     const timer = setInterval(pushLocation, LOCATION_PUSH_MS)
-    return () => clearInterval(timer)
+    // Retry sooner than the next scheduled tick the moment the browser
+    // itself reports the connection is back, instead of leaving a queued
+    // backlog sitting for up to LOCATION_PUSH_MS after reconnecting.
+    window.addEventListener('online', pushLocation)
+    return () => { clearInterval(timer); window.removeEventListener('online', pushLocation) }
   }, [rideId, ride?.status])
 
   async function update(patch, message) {
@@ -171,7 +185,8 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
       {view === 'map' ? (
         <div className="ride-map-view">
           <div className={`ride-map ${sheetOpen ? 'sheet-expanded' : ''}`}>
-            <RideMap ref={mapRef} members={ride.members} youId={user.id} routePoints={ride.routePoints} stops={ride.stops} />
+            <RideMap ref={mapRef} members={ride.members} youId={user.id} routePoints={ride.routePoints}
+                     stops={ride.stops} days={ride.days} />
 
             {(ride.origin || ride.destination) && (
               <div className="route-banner">

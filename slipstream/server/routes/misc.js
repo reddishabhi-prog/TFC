@@ -198,3 +198,31 @@ notificationRoutes.post('/read', async (req, res) => {
     .run(now(), req.user.id)
   res.json({ ok: true })
 })
+
+/* ------------------------------------------------------------- web push -- */
+
+export const pushRoutes = Router()
+pushRoutes.use(requireAuth)
+
+// The browser hands back { endpoint, keys: { p256dh, auth } } from
+// pushManager.subscribe() — stored as-is so web-push can address it later.
+pushRoutes.post('/subscribe', async (req, res) => {
+  const sub = req.body?.subscription
+  const endpoint = sub?.endpoint
+  const p256dh = sub?.keys?.p256dh
+  const auth = sub?.keys?.auth
+  if (!endpoint || !p256dh || !auth) return res.status(400).json({ error: 'Invalid push subscription' })
+
+  await db.prepare(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+  ).run(uid('push'), req.user.id, endpoint, p256dh, auth, now())
+  res.status(201).json({ ok: true })
+})
+
+pushRoutes.post('/unsubscribe', async (req, res) => {
+  const endpoint = req.body?.endpoint
+  if (endpoint) await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint)
+  res.json({ ok: true })
+})

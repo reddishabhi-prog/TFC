@@ -320,6 +320,25 @@ select.input { appearance: none; padding-right: var(--sp-8); cursor: pointer; }
   border-radius: var(--r-md); padding: var(--sp-3);
 }
 
+/* Borrowed dark weather-callout treatment: a plain "temp · condition" pill
+   reads as one more chip among many; this gives the featured day's forecast
+   the weight of its own moment instead. */
+.weather-callout {
+  display: flex; align-items: center; gap: var(--sp-3);
+  background: var(--brand-ink); color: #fff;
+  border-radius: var(--r-lg); padding: var(--sp-4);
+}
+.weather-callout-icon {
+  width: 44px; height: 44px; border-radius: var(--r-full); flex-shrink: 0;
+  background: rgba(255,255,255,0.14);
+  display: grid; place-items: center; font-size: 21px;
+}
+.weather-callout-title { display: block; font-weight: var(--fw-heavy); font-size: var(--fs-base); }
+.weather-callout-sub {
+  display: block; font-size: var(--fs-xs); color: rgba(255,255,255,0.72);
+  margin-top: 2px; font-variant-numeric: tabular-nums;
+}
+
 .hero-card {
   position: relative;
   overflow: hidden;
@@ -352,6 +371,15 @@ select.input { appearance: none; padding-right: var(--sp-8); cursor: pointer; }
   text-wrap: balance;
 }
 .hero-body { color: rgba(255,255,255,0.75); font-size: var(--fs-sm); margin-top: var(--sp-2); }
+/* Borrowed from the "ACTIVE RIDE" card treatment — a tighter, uppercase
+   tabular meta line reads more like a live status line than prose. */
+.hero-meta {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs); font-weight: var(--fw-strong);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+  font-variant-numeric: tabular-nums;
+}
 
 .section { padding: var(--sp-5) var(--sp-4) 0; }
 .section-title {
@@ -853,6 +881,13 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   width: 28px; height: 28px; border-radius: var(--r-full);
   background: #fff; font-size: 15px;
   border: 2px solid var(--brand-500); box-shadow: var(--shadow-2);
+}
+.day-pin {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: var(--r-full);
+  background: var(--brand-ink); color: #fff;
+  font-size: var(--fs-2xs); font-weight: var(--fw-heavy);
+  border: 2px solid #fff; box-shadow: var(--shadow-2);
 }
 .sos-btn {
   position: absolute; right: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));

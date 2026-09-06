@@ -11,16 +11,21 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Leaflet is only ever imported by the two lazy-loaded ride screens,
-        // so it would already end up out of the main chunk — pulling it into
-        // its own named chunk just makes that explicit. React/react-dom
-        // change far less often than the app's own code, so splitting them
-        // out too means a normal feature deploy doesn't force everyone to
-        // re-download the framework on top of what they've already cached.
+        // Only the packages that are ALWAYS needed get an explicit chunk.
+        // A blanket "everything else in node_modules -> vendor" rule looks
+        // tidier but is a trap: jsPDF is reached only through a dynamic
+        // import() inside the PDF export, but its own dependencies
+        // (fflate, fast-png, @babel/runtime) don't have "jspdf" in their
+        // path, so that kind of rule sweeps them into the eager bundle
+        // anyway — nearly 3x'd vendor.js the first time this was tried.
+        // Returning undefined for anything unlisted leaves Rollup's default
+        // splitting in place, which correctly follows the dynamic-import
+        // boundary for jsPDF and everything it pulls in.
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
-          if (id.includes('leaflet')) return 'leaflet'
-          return 'vendor'
+          if (id.includes('/leaflet/')) return 'leaflet'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'vendor'
+          return undefined
         },
       },
     },

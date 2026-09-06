@@ -7,6 +7,7 @@ import { validateName } from '../../src/utils/validate.js'
 import { geocode, drivingRoute, sampleRoutePoints, decimate } from '../lib/geo.js'
 import { dayWeather } from '../lib/weather.js'
 import { notifyUsers } from '../lib/notify.js'
+import { pushNotifyUsers } from '../lib/push.js'
 
 const MEMORY_CONTENT_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
@@ -186,6 +187,14 @@ rideRoutes.post('/', async (req, res) => {
     created_at: now(),
   }
 
+  const others = memberIds.filter((id) => id !== req.user.id)
+  const inviteNotification = {
+    kind: 'ride_invite',
+    title: `You're on ${ride.name}`,
+    body: `${req.user.name} added you to a ride${ride.origin && ride.destination ? ` — ${ride.origin} to ${ride.destination}` : ''}.`,
+    rideId: ride.id,
+  }
+
   await db.transaction(async (tx) => {
     await tx.prepare(
       `INSERT INTO rides (id, name, description, origin, destination, starts_at, duration_hrs,
@@ -229,16 +238,15 @@ rideRoutes.post('/', async (req, res) => {
         .run(groupId, id, now())
     }
 
-    const others = memberIds.filter((id) => id !== req.user.id)
     if (others.length) {
-      await notifyUsers(tx, others, {
-        kind: 'ride_invite',
-        title: `You're on ${ride.name}`,
-        body: `${req.user.name} added you to a ride${ride.origin && ride.destination ? ` — ${ride.origin} to ${ride.destination}` : ''}.`,
-        rideId: ride.id,
-      })
+      await notifyUsers(tx, others, inviteNotification)
     }
   })()
+
+  // Push is a real outbound HTTP call per subscription — never made from
+  // inside the transaction above, or it would deadlock waiting for a
+  // connection the transaction itself is holding (see lib/push.js).
+  if (others.length) pushNotifyUsers(others, inviteNotification).catch(() => {})
 
   const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id)
   res.status(201).json({ ride: await serializeRide(saved, req.user.id) })
@@ -252,6 +260,14 @@ rideRoutes.post('/join', async (req, res) => {
   if (!ride) return res.status(404).json({ error: 'No ride matches that code', field: 'joinCode' })
   if (ride.status === 'ended') return res.status(409).json({ error: 'That ride has already finished' })
 
+  const joinedNotification = {
+    kind: 'ride_joined',
+    title: `${req.user.name} joined ${ride.name}`,
+    body: `They used your join code ${ride.join_code}.`,
+    rideId: ride.id,
+  }
+  let notifyLeader = false
+
   await db.transaction(async (tx) => {
     const { changes } = await tx.prepare('INSERT INTO ride_members (ride_id, user_id, role, joined_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING')
       .run(ride.id, req.user.id, 'rider', now())
@@ -263,14 +279,13 @@ rideRoutes.post('/join', async (req, res) => {
     // changes is 0 when the rider was already on this ride (ON CONFLICT DO
     // NOTHING) — nothing new happened, so the leader shouldn't hear about it.
     if (changes && ride.leader_id !== req.user.id) {
-      await notifyUsers(tx, [ride.leader_id], {
-        kind: 'ride_joined',
-        title: `${req.user.name} joined ${ride.name}`,
-        body: `They used your join code ${ride.join_code}.`,
-        rideId: ride.id,
-      })
+      await notifyUsers(tx, [ride.leader_id], joinedNotification)
+      notifyLeader = true
     }
   })()
+
+  // Outside the transaction — see lib/push.js on why this can't run inside it.
+  if (notifyLeader) pushNotifyUsers([ride.leader_id], joinedNotification).catch(() => {})
 
   const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(ride.id)
   res.json({ ride: await serializeRide(saved, req.user.id) })
@@ -352,8 +367,9 @@ rideRoutes.post('/plan', async (req, res) => {
 
   const days = await Promise.all(Array.from({ length: selectedDays }, async (_, i) => {
     const date = startDate + i * 86400000
-    const weather = stops[i] ? await dayWeather(stops[i].lat, stops[i].lng, date) : null
-    return { index: i + 1, date, weather }
+    const stop = stops[i] ?? null
+    const weather = stop ? await dayWeather(stop.lat, stop.lng, date) : null
+    return { index: i + 1, date, weather, lat: stop?.lat ?? null, lng: stop?.lng ?? null }
   }))
 
   res.json({
@@ -407,25 +423,41 @@ rideRoutes.patch('/:id', loadRide, async (req, res) => {
 // Riders push their own position every few seconds while a ride is live;
 // everyone else picks it up on their next GET /rides/:id poll. No
 // broadcast/socket layer needed for a few riders' worth of traffic.
+// Accepts either a single {lat, lng} (older clients, or the common case) or
+// a {points: [{lat, lng, at}, ...]} batch — the device queues GPS reads that
+// failed to reach the server (a dead zone on the highway) and flushes them
+// together once connectivity returns, so the breadcrumb trail behind the
+// share card doesn't have a gap for every dropped request. Each point's own
+// `at` timestamp is preserved for the trail; only the last point updates the
+// rider's live position.
 rideRoutes.post('/:id/location', loadRide, async (req, res) => {
-  const lat = Number(req.body?.lat)
-  const lng = Number(req.body?.lng)
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-    return res.status(400).json({ error: 'lat/lng must be valid coordinates' })
-  }
+  const rawPoints = Array.isArray(req.body?.points) && req.body.points.length
+    ? req.body.points
+    : [{ lat: req.body?.lat, lng: req.body?.lng, at: now() }]
+
+  const points = rawPoints
+    .map((p) => ({ lat: Number(p?.lat), lng: Number(p?.lng), at: Number(p?.at) || now() }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng) && p.lat >= -90 && p.lat <= 90 && p.lng >= -180 && p.lng <= 180)
+    .slice(-30) // a phone that was offline for a while shouldn't be able to replay an unbounded backlog
+  if (!points.length) return res.status(400).json({ error: 'lat/lng must be valid coordinates' })
+
+  const last = points[points.length - 1]
   const { changes } = await db.prepare(
     'UPDATE ride_members SET lat = ?, lng = ?, location_updated_at = ? WHERE ride_id = ? AND user_id = ?',
-  ).run(lat, lng, now(), req.ride.id, req.user.id)
+  ).run(last.lat, last.lng, now(), req.ride.id, req.user.id)
   if (!changes) return res.status(403).json({ error: 'Only ride members can share their location' })
 
   // Append a breadcrumb only once the rider has actually moved, so a bike
   // parked at a chai stop doesn't write a point every 8 seconds all afternoon.
-  const last = await db.prepare(
+  let prevPoint = await db.prepare(
     'SELECT lat, lng FROM ride_track WHERE ride_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
   ).get(req.ride.id, req.user.id)
-  if (!last || metresBetween(last.lat, last.lng, lat, lng) >= MIN_TRACK_METRES) {
-    await db.prepare('INSERT INTO ride_track (ride_id, user_id, lat, lng, created_at) VALUES (?,?,?,?,?)')
-      .run(req.ride.id, req.user.id, lat, lng, now())
+  for (const p of points) {
+    if (!prevPoint || metresBetween(prevPoint.lat, prevPoint.lng, p.lat, p.lng) >= MIN_TRACK_METRES) {
+      await db.prepare('INSERT INTO ride_track (ride_id, user_id, lat, lng, created_at) VALUES (?,?,?,?,?)')
+        .run(req.ride.id, req.user.id, p.lat, p.lng, p.at)
+      prevPoint = p
+    }
   }
   res.status(204).end()
 })
@@ -475,12 +507,14 @@ rideRoutes.post('/:id/sos', loadRide, async (req, res) => {
     .all(req.ride.id, req.user.id)).map((r) => r.user_id)
 
   if (others.length) {
-    await notifyUsers(db, others, {
+    const sosNotification = {
       kind: 'sos',
       title: `🆘 SOS from ${req.user.name}`,
       body: `${req.user.name} triggered an SOS during ${req.ride.name}. Reach out to them now.`,
       rideId: req.ride.id,
-    })
+    }
+    await notifyUsers(db, others, sosNotification)
+    pushNotifyUsers(others, sosNotification).catch(() => {})
   }
   res.json({ ok: true, notified: others.length })
 })

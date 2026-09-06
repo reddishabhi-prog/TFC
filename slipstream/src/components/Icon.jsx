@@ -48,6 +48,7 @@ const PATHS = {
   camera: 'M4 8.5 8 5h8l4 3.5M4 8.5V18a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18V8.5M4 8.5h16M12 16.4a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8Z',
   heart: 'M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9Z',
   locate: 'M12 2v4M12 18v4M2 12h4M18 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z',
+  download: 'M12 3v12M7 10l5 5 5-5M4.5 19.5h15',
 }
 
 export function Icon({ name, size = 20, strokeWidth = 1.9, ...rest }) {

@@ -139,7 +139,12 @@ export function CreateRideScreen({ onCancel, onCreated }) {
         points: selectedRoute.points,
       })
       setTripInfo(result)
-      setDays((prev) => prev.map((d, i) => ({ ...d, weather: result.days[i]?.weather ?? d.weather })))
+      setDays((prev) => prev.map((d, i) => ({
+        ...d,
+        weather: result.days[i]?.weather ?? d.weather,
+        lat: result.days[i]?.lat ?? d.lat,
+        lng: result.days[i]?.lng ?? d.lng,
+      })))
       setWarningDismissed(false)
     } catch (e) {
       setWeatherError(e.message || 'Could not check the weather right now')

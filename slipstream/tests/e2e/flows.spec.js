@@ -366,3 +366,26 @@ test.describe('Multi-day trip planning', () => {
     await expect(page.locator('.field-error')).toBeVisible({ timeout: 15000 })
   })
 })
+
+test.describe('Trip PDF export', () => {
+  test('the Plan tab can export a real PDF of the day-by-day plan', async ({ page }) => {
+    await signUp(page, { phone: freshPhone(), name: 'PDF Exporter' })
+    await page.getByRole('button', { name: /Start a ride/i }).click()
+    await page.locator('#ride-name').waitFor()
+    await page.locator('#ride-name').fill('Coastal Loop')
+
+    const endDate = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+    await page.locator('#ride-end-date').fill(endDate)
+    await expect(page.locator('.trip-day')).toHaveCount(3)
+    await page.locator('.trip-day').first().getByPlaceholder(/Where are you stopping/).fill('Mangalore')
+
+    await page.getByRole('button', { name: /Start the ride/i }).click()
+    await page.locator('.join-code-value').waitFor()
+
+    await page.locator('.ride-view-toggle').getByRole('button', { name: 'Plan' }).click()
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: /^PDF$/ }).click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toMatch(/summary\.pdf$/)
+  })
+})

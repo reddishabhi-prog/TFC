@@ -125,4 +125,7 @@ export const Api = {
 
   notifications: () => api.get('/notifications'),
   readNotifications: () => api.post('/notifications/read'),
+
+  subscribePush: (subscription) => api.post('/push/subscribe', { subscription }),
+  unsubscribePush: (endpoint) => api.post('/push/unsubscribe', { endpoint }),
 }

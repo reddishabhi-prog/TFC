@@ -65,3 +65,39 @@ self.addEventListener('fetch', (event) => {
     return res
   })())
 })
+
+// The payload is whatever lib/push.js's pushNotifyUsers() JSON-serialized —
+// { title, body, rideId }. A push with no attached data (or a malformed
+// payload) still needs a notification to appear, or the browser prints a
+// generic "this site was updated in the background" warning of its own.
+self.addEventListener('push', (event) => {
+  let data = {}
+  try { data = event.data?.json() ?? {} } catch { /* non-JSON payload, ignore */ }
+  const title = data.title || 'Slipstream'
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { rideId: data.rideId ?? null },
+      tag: data.rideId ? `ride-${data.rideId}` : undefined,
+    }),
+  )
+})
+
+// Focuses an already-open tab rather than always opening a new one — most
+// pushes land while the app is already open in the background.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  // The SPA keeps navigation state in memory, not the URL, so there's no
+  // route to deep-link into yet — focusing (or opening) the app at all is
+  // the win here; the tapped notification's ride is still sitting in the
+  // in-app Notifications list once they're in.
+  event.waitUntil((async () => {
+    const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    for (const client of clientsList) {
+      if ('focus' in client) return client.focus()
+    }
+    return self.clients.openWindow('/')
+  })())
+})

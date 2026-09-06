@@ -37,15 +37,25 @@ function stopIcon(kind) {
   })
 }
 
+function dayIcon(index) {
+  return L.divIcon({
+    className: 'day-pin-wrap',
+    html: `<span class="day-pin">${index}</span>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  })
+}
+
 /** Live convoy map: one marker per rider who has shared a location, updated
  *  in place as fresh coordinates arrive instead of re-mounting the map.
  *  Exposes recenter() via ref for a manual "back to the group" control, since
  *  auto-fit deliberately stops fighting the user after the first frame. */
-export const RideMap = forwardRef(function RideMap({ members, youId, routePoints, stops = [] }, ref) {
+export const RideMap = forwardRef(function RideMap({ members, youId, routePoints, stops = [], days = [] }, ref) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
   const stopMarkersRef = useRef(new Map())
+  const dayMarkersRef = useRef([])
   const routeLineRef = useRef(null)
   const membersRef = useRef(members)
   membersRef.current = members
@@ -73,9 +83,26 @@ export const RideMap = forwardRef(function RideMap({ members, youId, routePoints
     return () => {
       map.remove(); mapRef.current = null
       markersRef.current = new Map(); framedRef.current = new Set(); routeLineRef.current = null
-      stopMarkersRef.current = new Map()
+      stopMarkersRef.current = new Map(); dayMarkersRef.current = []
     }
   }, [])
+
+  // The planned day-by-day stops, so the group can see the whole trip's
+  // shape at a glance next to the route line — not just today's rider pins.
+  // Redrawn wholesale on change rather than diffed like the pit stops above,
+  // since a ride's day plan is set at creation and essentially never changes.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const located = days.filter((d) => typeof d.lat === 'number' && typeof d.lng === 'number')
+    const markers = located.map((d) =>
+      L.marker([d.lat, d.lng], { icon: dayIcon(d.index) })
+        .bindTooltip(d.place ? `Day ${d.index} · ${d.place}` : `Day ${d.index}`, { direction: 'top', offset: [0, -11] })
+        .addTo(map),
+    )
+    dayMarkersRef.current = markers
+    return () => { for (const m of markers) m.remove() }
+  }, [days])
 
   // Pit stops riders have dropped — kept in sync by id rather than wiped and
   // redrawn each time, the same reasoning as the rider markers below.

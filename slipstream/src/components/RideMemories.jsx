@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { upload } from '@vercel/blob/client'
 import { Api, getToken } from '../services/api'
 import { useAuth, useToast } from '../context/AppContext'
 import { Button, Avatar } from './ui'
@@ -190,6 +189,11 @@ function ComposeSheet({ ride, remaining, onClose, onPosted }) {
     if (!file || busy) return
     setBusy(true)
     try {
+      // Loaded on demand: @vercel/blob/client's bundle drags in a ~165KB
+      // jose/OIDC chain (for a server-to-server auth path this app never
+      // uses) that has no business loading every time someone opens a ride
+      // — only the moment they actually post a photo.
+      const { upload } = await import('@vercel/blob/client')
       const blob = await upload(`memories/${ride.id}/${Date.now()}-${file.name}`, file, {
         access: 'public',
         handleUploadUrl: Api.memoryUploadUrl(ride.id),
