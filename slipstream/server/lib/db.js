@@ -285,6 +285,20 @@ CREATE TABLE IF NOT EXISTS ride_track (
   created_at BIGINT NOT NULL
 );
 
+-- Pins any rider drops on the live map mid-ride — fuel, food, a rest break,
+-- or anything else worth flagging to the group — separate from ride_track's
+-- silent GPS breadcrumbs, since a stop is something someone chose to mark.
+CREATE TABLE IF NOT EXISTS ride_stops (
+  id         TEXT PRIMARY KEY,
+  ride_id    TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL DEFAULT 'other',
+  label      TEXT,
+  lat        DOUBLE PRECISION NOT NULL,
+  lng        DOUBLE PRECISION NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS vehicles (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -327,6 +341,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_likes_memory ON memory_likes(memory_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_ride ON checklist_items(ride_id, seq);
 CREATE INDEX IF NOT EXISTS idx_checklist_checks_item ON checklist_checks(item_id);
 CREATE INDEX IF NOT EXISTS idx_ride_track_ride ON ride_track(ride_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ride_stops_ride ON ride_stops(ride_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_ride_days_ride ON ride_days(ride_id, day_index);
 CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ride ON messages(ride_id, created_at);

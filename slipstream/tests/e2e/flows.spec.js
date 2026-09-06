@@ -49,7 +49,7 @@ test.describe('Rides', () => {
     await startRide(page)
     // The action row lives in the collapsible bottom sheet, which starts
     // peeked so the map gets the full screen by default.
-    await page.locator('.sheet-handle').click()
+    await page.locator('.ride-sheet-handle').click()
     await page.getByRole('button', { name: /^End$/ }).click()
     await expect(page.getByText('End this ride?')).toBeVisible()
     await page.getByRole('button', { name: /Keep riding/i }).click()
@@ -63,6 +63,19 @@ test.describe('Rides', () => {
     await expect(page.getByText('Send SOS?')).toBeVisible()
     await page.locator('.dialog').getByRole('button', { name: /Send SOS/i }).click()
     await expect(page.locator('.sos-sent')).toBeVisible()
+  })
+
+  test('a rider can drop a pit stop pin with a note', async ({ page, context }) => {
+    await context.grantPermissions(['geolocation'])
+    await context.setGeolocation({ latitude: 12.9716, longitude: 77.5946 })
+    await signUp(page, { phone: freshPhone(), name: 'Pit Stopper' })
+    await startRide(page)
+
+    await page.locator('.pit-stop-btn').click()
+    await expect(page.getByText('Add a pit stop')).toBeVisible()
+    await page.getByPlaceholder(/Optional note/i).fill('HP petrol pump')
+    await page.getByRole('button', { name: /Drop a pin at my location/i }).click()
+    await expect(page.getByText('Pit stop added')).toBeVisible()
   })
 })
 

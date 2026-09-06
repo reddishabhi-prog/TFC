@@ -832,6 +832,7 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   background: rgba(20,17,16,0.85); color: var(--text-inverse, #fff);
   border-radius: var(--r-md); padding: 6px 10px;
   font-size: var(--fs-2xs); font-weight: var(--fw-strong); max-width: 60%;
+  transition: bottom var(--dur-med) var(--ease-out);
 }
 .map-recenter {
   position: absolute; top: var(--sp-4); right: var(--sp-4);
@@ -847,18 +848,43 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   border: 2px solid #fff; box-shadow: var(--shadow-2);
 }
 .rider-pin-you { border-color: #ffb84d; box-shadow: 0 0 0 3px rgba(255,184,77,0.35), var(--shadow-2); }
+.pit-pin {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: var(--r-full);
+  background: #fff; font-size: 15px;
+  border: 2px solid var(--brand-500); box-shadow: var(--shadow-2);
+}
 .sos-btn {
   position: absolute; right: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));
   width: 68px; height: 68px; border-radius: var(--r-full);
   background: var(--danger-500); color: #fff;
   font-weight: var(--fw-heavy); font-size: var(--fs-sm);
   box-shadow: 0 0 0 8px rgba(196,43,28,0.18), var(--shadow-3);
+  transition: bottom var(--dur-med) var(--ease-out);
 }
 .sos-btn:active { transform: scale(0.95); }
 .sos-sent {
   position: absolute; right: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));
   padding: var(--sp-3) var(--sp-4); border-radius: var(--r-full);
   background: var(--ink-800); color: #fff; font-weight: var(--fw-strong); font-size: var(--fs-sm);
+  transition: bottom var(--dur-med) var(--ease-out);
+}
+.pit-stop-btn {
+  position: absolute; left: var(--sp-4); bottom: calc(var(--sheet-peek) + var(--sp-3));
+  width: 52px; height: 52px; border-radius: var(--r-full);
+  background: rgba(20,17,16,0.85); color: #fff;
+  display: grid; place-items: center; box-shadow: var(--shadow-2);
+  transition: bottom var(--dur-med) var(--ease-out);
+}
+.pit-stop-btn:active { transform: scale(0.94); }
+/* The sheet expanding to 72vh would otherwise bury every one of these
+   controls underneath it — slide them up to sit just above it instead of
+   letting SOS in particular become unreachable while it's open. */
+.ride-map.sheet-expanded .sos-btn,
+.ride-map.sheet-expanded .sos-sent,
+.ride-map.sheet-expanded .pit-stop-btn,
+.ride-map.sheet-expanded .map-hint {
+  bottom: calc(72vh + var(--sp-3));
 }
 .ride-view-toggle { margin: var(--sp-3) var(--sp-4) 0; flex-shrink: 0; }
 
@@ -1088,11 +1114,15 @@ button.hero-card { display: block; width: 100%; text-align: left; }
   transition: max-height var(--dur-med) var(--ease-out);
 }
 .ride-sheet.expanded { max-height: 72vh; overflow-y: auto; }
-.sheet-handle {
+/* Named apart from the generic .sheet-handle (a plain decorative bar used by
+   the modal Sheet component) — this one is a real button, and sharing the
+   class name let the decorative rule's background/height/margin leak onto
+   it since both apply at equal specificity. */
+.ride-sheet-handle {
   display: flex; justify-content: center; width: 100%;
   padding: var(--sp-2) 0; margin-bottom: 2px;
 }
-.sheet-handle-bar { width: 36px; height: 4px; border-radius: var(--r-full); background: var(--border-strong); }
+.ride-sheet-handle-bar { width: 36px; height: 4px; border-radius: var(--r-full); background: var(--border-strong); }
 .join-code {
   display: flex; align-items: center; gap: var(--sp-3);
   width: 100%; padding: var(--sp-3) var(--sp-4);

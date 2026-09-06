@@ -26,14 +26,26 @@ function pinIcon(member, isYou) {
   })
 }
 
+const STOP_EMOJI = { fuel: '⛽', food: '🍽️', rest: '☕', other: '📍' }
+
+function stopIcon(kind) {
+  return L.divIcon({
+    className: 'pit-pin-wrap',
+    html: `<span class="pit-pin">${STOP_EMOJI[kind] || STOP_EMOJI.other}</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  })
+}
+
 /** Live convoy map: one marker per rider who has shared a location, updated
  *  in place as fresh coordinates arrive instead of re-mounting the map.
  *  Exposes recenter() via ref for a manual "back to the group" control, since
  *  auto-fit deliberately stops fighting the user after the first frame. */
-export const RideMap = forwardRef(function RideMap({ members, youId, routePoints }, ref) {
+export const RideMap = forwardRef(function RideMap({ members, youId, routePoints, stops = [] }, ref) {
   const elRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
+  const stopMarkersRef = useRef(new Map())
   const routeLineRef = useRef(null)
   const membersRef = useRef(members)
   membersRef.current = members
@@ -61,8 +73,29 @@ export const RideMap = forwardRef(function RideMap({ members, youId, routePoints
     return () => {
       map.remove(); mapRef.current = null
       markersRef.current = new Map(); framedRef.current = new Set(); routeLineRef.current = null
+      stopMarkersRef.current = new Map()
     }
   }, [])
+
+  // Pit stops riders have dropped — kept in sync by id rather than wiped and
+  // redrawn each time, the same reasoning as the rider markers below.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const seen = new Set()
+    for (const stop of stops) {
+      seen.add(stop.id)
+      if (!stopMarkersRef.current.has(stop.id)) {
+        const marker = L.marker([stop.lat, stop.lng], { icon: stopIcon(stop.kind) })
+          .bindTooltip(`${stop.label || stop.kind} · ${stop.authorName}`, { direction: 'top', offset: [0, -12] })
+          .addTo(map)
+        stopMarkersRef.current.set(stop.id, marker)
+      }
+    }
+    for (const [id, marker] of stopMarkersRef.current) {
+      if (!seen.has(id)) { marker.remove(); stopMarkersRef.current.delete(id) }
+    }
+  }, [stops])
 
   // The road the leader picked at ride creation, if any — drawn once beneath
   // the rider pins so the group can see the planned line, not just where

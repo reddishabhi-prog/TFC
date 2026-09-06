@@ -83,6 +83,8 @@ export const Api = {
   updateRide: (id, payload) => api.patch(`/rides/${id}`, payload),
   updateLocation: (id, payload) => api.post(`/rides/${id}/location`, payload),
   sendSos: (id) => api.post(`/rides/${id}/sos`),
+  addStop: (id, payload) => api.post(`/rides/${id}/stops`, payload),
+  deleteStop: (id, stopId) => api.del(`/rides/${id}/stops/${stopId}`),
 
   rideTrack: (rideId) => api.get(`/rides/${rideId}/track`),
 

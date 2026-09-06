@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Api } from '../services/api'
 import { useAuth, useToast } from '../context/AppContext'
-import { Button, ConfirmDialog, Avatar, Pill } from '../components/ui'
+import { Button, ConfirmDialog, Avatar, Pill, Sheet, ChipGroup, TextInput } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { RideMap } from '../components/RideMap'
 import { RideMemories } from '../components/RideMemories'
@@ -16,6 +16,13 @@ import { dateTimeLabel } from '../utils/format'
 const LOCATION_PUSH_MS = 8000
 const LOCATION_POLL_MS = 6000
 
+const STOP_KINDS = [
+  { value: 'fuel', label: 'Fuel', icon: '⛽' },
+  { value: 'food', label: 'Food', icon: '🍽️' },
+  { value: 'rest', label: 'Rest', icon: '☕' },
+  { value: 'other', label: 'Other', icon: '📍' },
+]
+
 export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const { user } = useAuth()
   const toast = useToast()
@@ -28,6 +35,10 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   const [view, setView] = useState('map')
   const [shareCard, setShareCard] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [addingStop, setAddingStop] = useState(false)
+  const [stopKind, setStopKind] = useState('fuel')
+  const [stopLabel, setStopLabel] = useState('')
+  const [stopBusy, setStopBusy] = useState(false)
   const mapRef = useRef(null)
 
   useEffect(() => {
@@ -86,6 +97,33 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  function addStop() {
+    if (!('geolocation' in navigator)) return toast.error("This device can't share a location")
+    setStopBusy(true)
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { ride: updated } = await Api.addStop(rideId, {
+            kind: stopKind,
+            label: stopLabel.trim(),
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          })
+          setRide(updated)
+          toast.success('Pit stop added')
+          setAddingStop(false)
+          setStopLabel('')
+        } catch (e) {
+          toast.error(e)
+        } finally {
+          setStopBusy(false)
+        }
+      },
+      () => { toast.error('Could not get your location'); setStopBusy(false) },
+      { enableHighAccuracy: true, timeout: 8000 },
+    )
+  }
+
   if (!ride) {
     return (
       <div className="screen screen-enter">
@@ -126,8 +164,8 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
 
       {view === 'map' ? (
         <div className="ride-map-view">
-          <div className="ride-map">
-            <RideMap ref={mapRef} members={ride.members} youId={user.id} routePoints={ride.routePoints} />
+          <div className={`ride-map ${sheetOpen ? 'sheet-expanded' : ''}`}>
+            <RideMap ref={mapRef} members={ride.members} youId={user.id} routePoints={ride.routePoints} stops={ride.stops} />
 
             {(ride.origin || ride.destination) && (
               <div className="route-banner">
@@ -146,6 +184,12 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
             )}
 
             {!ended && (
+              <button className="pit-stop-btn" onClick={() => setAddingStop(true)} aria-label="Add a pit stop">
+                <Icon name="fuel" size={19} />
+              </button>
+            )}
+
+            {!ended && (
               sos === 'sent'
                 ? <div className="sos-sent">🆘 SOS sent</div>
                 : <button className="sos-btn" onClick={() => setConfirm({ kind: 'sos' })}>SOS</button>
@@ -153,9 +197,9 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
           </div>
 
           <div className={`ride-sheet ${sheetOpen ? 'expanded' : ''}`}>
-            <button className="sheet-handle" onClick={() => setSheetOpen((v) => !v)}
+            <button className="ride-sheet-handle" onClick={() => setSheetOpen((v) => !v)}
                     aria-expanded={sheetOpen} aria-label={sheetOpen ? 'Collapse ride details' : 'Expand ride details'}>
-              <span className="sheet-handle-bar" />
+              <span className="ride-sheet-handle-bar" />
             </button>
 
             <button className="join-code" onClick={copyCode} aria-label={`Copy join code ${ride.joinCode}`}>
@@ -247,6 +291,17 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
           }
         }}
       />
+
+      <Sheet open={addingStop} onClose={() => setAddingStop(false)} title="Add a pit stop">
+        <div className="stack">
+          <ChipGroup label="Type" options={STOP_KINDS} value={stopKind} onChange={setStopKind} />
+          <TextInput placeholder="Optional note — e.g. HP petrol pump" value={stopLabel}
+                     onChange={(e) => setStopLabel(e.target.value)} />
+          <Button variant="primary" block loading={stopBusy} onClick={addStop}>
+            Drop a pin at my location
+          </Button>
+        </div>
+      </Sheet>
 
       {shareCard && <RideShareCard ride={ride} onClose={() => setShareCard(false)} />}
     </div>

@@ -57,6 +57,14 @@ async function serializeRide(ride, viewerId) {
     locationUpdatedAt: m.locationUpdatedAt ? Number(m.locationUpdatedAt) : null,
   }))
   const group = await db.prepare('SELECT id FROM groups WHERE ride_id = ?').get(ride.id)
+  const stops = (await db
+    .prepare(
+      `SELECT rs.id, rs.kind, rs.label, rs.lat, rs.lng, rs.created_at AS "createdAt",
+              u.id AS "userId", u.name AS "authorName", u.avatar_color AS "authorColor"
+         FROM ride_stops rs JOIN users u ON u.id = rs.user_id
+        WHERE rs.ride_id = ? ORDER BY rs.created_at`,
+    )
+    .all(ride.id)).map((s) => ({ ...s, createdAt: Number(s.createdAt) }))
   const days = (await db
     .prepare('SELECT * FROM ride_days WHERE ride_id = ? ORDER BY day_index')
     .all(ride.id)).map((d) => ({
@@ -92,6 +100,7 @@ async function serializeRide(ride, viewerId) {
     routePoints: ride.route_points ?? null, // pg parses JSONB back into a JS array already
     members,
     days,
+    stops,
     isLeader: ride.leader_id === viewerId,
     groupId: group?.id ?? null,
   }
@@ -419,6 +428,43 @@ rideRoutes.post('/:id/location', loadRide, async (req, res) => {
       .run(req.ride.id, req.user.id, lat, lng, now())
   }
   res.status(204).end()
+})
+
+const STOP_KINDS = ['fuel', 'food', 'rest', 'other']
+
+// A rider dropping a pin at their current location — fuel, food, a rest
+// break, or anything else — visible to the whole ride on the live map.
+rideRoutes.post('/:id/stops', loadRide, async (req, res) => {
+  const kind = STOP_KINDS.includes(req.body?.kind) ? req.body.kind : 'other'
+  const label = req.body?.label ? String(req.body.label).trim().slice(0, 120) : null
+  const lat = Number(req.body?.lat)
+  const lng = Number(req.body?.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'lat/lng must be valid coordinates' })
+  }
+  const member = await db.prepare('SELECT 1 FROM ride_members WHERE ride_id = ? AND user_id = ?')
+    .get(req.ride.id, req.user.id)
+  if (!member) return res.status(403).json({ error: 'Only ride members can drop a pit stop' })
+
+  await db.prepare(
+    `INSERT INTO ride_stops (id, ride_id, user_id, kind, label, lat, lng, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).run(uid('stop'), req.ride.id, req.user.id, kind, label, lat, lng, now())
+
+  const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(req.ride.id)
+  res.status(201).json({ ride: await serializeRide(saved, req.user.id) })
+})
+
+rideRoutes.delete('/:id/stops/:stopId', loadRide, async (req, res) => {
+  const stop = await db.prepare('SELECT * FROM ride_stops WHERE id = ? AND ride_id = ?')
+    .get(req.params.stopId, req.ride.id)
+  if (!stop) return res.status(404).json({ error: 'Stop not found' })
+  if (stop.user_id !== req.user.id && req.ride.leader_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the rider who dropped it or the leader can remove it' })
+  }
+  await db.prepare('DELETE FROM ride_stops WHERE id = ?').run(stop.id)
+  const saved = await db.prepare('SELECT * FROM rides WHERE id = ?').get(req.ride.id)
+  res.json({ ride: await serializeRide(saved, req.user.id) })
 })
 
 // The SOS button broadcasts a real notification to the rest of the ride
