@@ -217,7 +217,7 @@ function ComposeSheet({ ride, remaining, onClose, onPosted }) {
 
   return (
     <div className="sheet-scrim" onClick={() => !busy && onClose()}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label="Add your best memories"
+      <div className="action-sheet" role="dialog" aria-modal="true" aria-label="Add your best memories"
            tabIndex={-1} ref={panel} onClick={(e) => e.stopPropagation()}>
         <div className="sheet-title-row">
           <div className="sheet-title">Add your best memories</div>
@@ -284,7 +284,7 @@ function LimitSheet({ ride, onClose, onSaved }) {
 
   return (
     <div className="sheet-scrim" onClick={() => !busy && onClose()}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label="Photo & video limit"
+      <div className="action-sheet" role="dialog" aria-modal="true" aria-label="Photo & video limit"
            tabIndex={-1} ref={panel} onClick={(e) => e.stopPropagation()}>
         <div className="limit-card">
           <div className="limit-icon"><Icon name="camera" size={19} /></div>

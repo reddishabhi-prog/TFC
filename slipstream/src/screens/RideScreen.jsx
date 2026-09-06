@@ -50,13 +50,19 @@ export function RideScreen({ rideId, onBack, onOpenChat, onOpenSplit }) {
   }, [rideId, toast])
 
   // Poll everyone's latest position while the ride is on screen. Cheap and
-  // simple beats a websocket for a handful of riders checking a map.
+  // simple beats a websocket for a handful of riders checking a map — but
+  // only while the tab is actually visible. Nobody's watching the map while
+  // it's backgrounded, so there's no reason to keep spending battery and
+  // data polling it; a fresh fetch on return catches it straight back up.
   useEffect(() => {
     if (!ride || ride.status === 'ended') return
-    const timer = setInterval(() => {
+    const poll = () => {
       Api.ride(rideId).then(({ ride: r }) => setRide(r)).catch(() => { /* skip a beat, try again next tick */ })
-    }, LOCATION_POLL_MS)
-    return () => clearInterval(timer)
+    }
+    const timer = setInterval(() => { if (!document.hidden) poll() }, LOCATION_POLL_MS)
+    const onVisible = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible) }
   }, [rideId, ride?.status])
 
   // Share this device's own GPS position while the ride is live. Paused/ended

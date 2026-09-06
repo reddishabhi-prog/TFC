@@ -1,16 +1,31 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { AuthProvider, ThemeProvider, ToastProvider, useAuth } from './context/AppContext'
 import { SplashScreen } from './screens/SplashScreen'
 import { AuthScreen } from './screens/AuthScreen'
 import { HomeScreen } from './screens/HomeScreen'
-import { CreateRideScreen } from './screens/CreateRideScreen'
-import { RideScreen } from './screens/RideScreen'
-import { SplitScreen } from './screens/SplitScreen'
-import { ChatListScreen, ChatThreadScreen } from './screens/ChatScreen'
-import { GarageScreen } from './screens/GarageScreen'
-import { ProfileScreen } from './screens/ProfileScreen'
-import { NotificationsScreen } from './screens/NotificationsScreen'
 import { Icon } from './components/Icon'
+
+// Home (and Auth/Splash above) are what almost every session loads first, so
+// they stay in the main bundle. Everything reached by navigating away —
+// including the two screens that pull in Leaflet — loads on demand instead
+// of costing every visitor a heavier first paint for screens they may never
+// open this session.
+const CreateRideScreen = lazy(() => import('./screens/CreateRideScreen').then((m) => ({ default: m.CreateRideScreen })))
+const RideScreen = lazy(() => import('./screens/RideScreen').then((m) => ({ default: m.RideScreen })))
+const SplitScreen = lazy(() => import('./screens/SplitScreen').then((m) => ({ default: m.SplitScreen })))
+const ChatListScreen = lazy(() => import('./screens/ChatScreen').then((m) => ({ default: m.ChatListScreen })))
+const ChatThreadScreen = lazy(() => import('./screens/ChatScreen').then((m) => ({ default: m.ChatThreadScreen })))
+const GarageScreen = lazy(() => import('./screens/GarageScreen').then((m) => ({ default: m.GarageScreen })))
+const ProfileScreen = lazy(() => import('./screens/ProfileScreen').then((m) => ({ default: m.ProfileScreen })))
+const NotificationsScreen = lazy(() => import('./screens/NotificationsScreen').then((m) => ({ default: m.NotificationsScreen })))
+
+function ScreenFallback() {
+  return (
+    <div className="screen" style={{ display: 'grid', placeItems: 'center' }}>
+      <div className="skeleton" style={{ width: 160, height: 12 }} />
+    </div>
+  )
+}
 
 const TABS = [
   { id: 'home',    label: 'Home',  icon: 'home' },
@@ -94,7 +109,9 @@ function Shell() {
   return (
     <>
       {/* Keying on route restarts the enter animation on every navigation. */}
-      <div key={route} className="screen">{screen}</div>
+      <Suspense fallback={<ScreenFallback />}>
+        <div key={route} className="screen">{screen}</div>
+      </Suspense>
       {!hideTabs && (
         <nav className="tab-bar" aria-label="Main navigation">
           {TABS.map((t) => (

@@ -290,7 +290,7 @@ export function RideShareCard({ ride, onClose }) {
 
   return (
     <div className="sheet-scrim" onClick={() => !busy && onClose()}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label="Ride card"
+      <div className="action-sheet" role="dialog" aria-modal="true" aria-label="Ride card"
            onClick={(e) => e.stopPropagation()}>
         <div className="sheet-title-row">
           <div className="sheet-title">Your ride card</div>

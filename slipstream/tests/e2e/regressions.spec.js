@@ -67,4 +67,21 @@ test.describe('Regressions', () => {
     // absorbs sub-pixel boundingBox() rounding without masking that bug.
     expect(s.y).toBeGreaterThanOrEqual(t.y + t.height - 4)
   })
+
+  test('the generic bottom Sheet renders its own theme, not the dark action-sheet', async ({ page }) => {
+    // ui.jsx's <Sheet> (Add vehicle, New group, Add a pit stop, ...) shared
+    // the bare class name .sheet with RideMemories/RideShareCard's unrelated
+    // dark full-bleed panel. Same specificity, later in the file, so that
+    // rule's #1b1716 background/padding/animation silently won on every
+    // generic sheet in the app instead of the intended surface-raised theme.
+    await signUp(page, { phone: freshPhone(), name: 'Sheet Theme Checker' })
+    await page.getByRole('button', { name: 'Me', exact: true }).click()
+    await page.getByRole('button', { name: /garage/i }).click()
+    await page.getByRole('button', { name: 'Add a vehicle' }).click()
+
+    const sheet = page.locator('.sheet')
+    await expect(sheet).toBeVisible()
+    const bg = await sheet.evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(bg).not.toBe('rgb(27, 23, 22)')
+  })
 })
