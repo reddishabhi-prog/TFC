@@ -1,0 +1,159 @@
+import { Router } from 'express'
+import { del } from '@vercel/blob'
+import { handleUpload } from '@vercel/blob/client'
+import { db, uid, now } from '../lib/db.js'
+import { requireAuth, publicUser } from '../lib/auth.js'
+import { riderStats, gradeBadges } from '../lib/badges.js'
+import { validatePhone, validateEmail, validateName, PHONE_RE } from '../../src/utils/validate.js'
+
+const AVATAR_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+// The client crops to a fixed square before uploading, so a real photo never
+// approaches this — it only guards against something bypassing that step.
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024
+
+export const userRoutes = Router()
+userRoutes.use(requireAuth)
+
+// Client-upload handshake, same shape as the ride-memories one: the browser
+// uploads the (already cropped) image straight to Blob storage using a
+// short-lived token minted here, rather than through this server.
+userRoutes.post('/me/avatar-upload', async (req, res) => {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[slipstream] BLOB_READ_WRITE_TOKEN is not set for this deployment')
+    return res.status(503).json({
+      error: 'Photo storage is not configured yet. Connect a Vercel Blob store to this project.',
+    })
+  }
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async () => ({
+        allowedContentTypes: AVATAR_CONTENT_TYPES,
+        maximumSizeInBytes: AVATAR_MAX_BYTES,
+        addRandomSuffix: true,
+      }),
+    })
+    res.json(jsonResponse)
+  } catch (err) {
+    console.error('[slipstream] avatar-upload failed:', err?.message, err)
+    res.status(400).json({ error: err.message })
+  }
+})
+
+userRoutes.get('/me/badges', async (req, res) => {
+  const stats = await riderStats(req.user.id)
+  res.json({ stats, badges: gradeBadges(stats) })
+})
+
+/**
+ * Rider lookup for invites. Searching by full phone number is exact; searching
+ * by name is a prefix match. Results are deliberately thin — a phone search
+ * confirms only that an account exists, and never exposes anyone's email.
+ */
+userRoutes.get('/search', async (req, res) => {
+  const q = String(req.query.q ?? '').trim()
+  if (q.length < 3) return res.json({ results: [] })
+
+  const digits = q.replace(/\D/g, '')
+  let rows = []
+  if (PHONE_RE.test(digits)) {
+    rows = await db.prepare('SELECT * FROM users WHERE phone = ? LIMIT 1').all(digits)
+  } else {
+    rows = await db
+      .prepare('SELECT * FROM users WHERE name LIKE ? AND id != ? ORDER BY name LIMIT 8')
+      .all(`${q}%`, req.user.id)
+  }
+  res.json({
+    results: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      avatarColor: r.avatar_color,
+      phoneHint: r.phone ? `••••${r.phone.slice(-4)}` : null,
+      isYou: r.id === req.user.id,
+    })),
+  })
+})
+
+/**
+ * Creates a placeholder account for someone not on Slipstream yet, so they can
+ * be added to a group and settle up before they ever install the app. When
+ * they later verify that number, findOrCreateUserByPhone returns this same row.
+ */
+userRoutes.post('/invite', async (req, res) => {
+  const name = String(req.body?.name ?? '').trim()
+  const phone = String(req.body?.phone ?? '').replace(/\D/g, '')
+
+  const nameError = validateName(name, { field: 'Name' })
+  if (nameError) return res.status(400).json({ error: nameError, field: 'name' })
+  const phoneError = validatePhone(phone)
+  if (phoneError) return res.status(400).json({ error: phoneError, field: 'phone' })
+
+  const existing = await db.prepare('SELECT * FROM users WHERE phone = ?').get(phone)
+  if (existing) return res.json({ user: publicUser(existing), created: false })
+
+  const row = {
+    id: uid('usr'),
+    name,
+    phone,
+    avatar_color: '#378add',
+    created_at: now(),
+  }
+  await db.prepare(
+    `INSERT INTO users (id, name, phone, avatar_color, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(row.id, row.name, row.phone, row.avatar_color, row.created_at)
+  const created = await db.prepare('SELECT * FROM users WHERE id = ?').get(row.id)
+  res.status(201).json({ user: publicUser(created), created: true })
+})
+
+userRoutes.patch('/me', async (req, res) => {
+  const b = req.body ?? {}
+  const errors = {}
+
+  if (b.name !== undefined) {
+    const e = validateName(b.name, { field: 'Name' })
+    if (e) errors.name = e
+  }
+  if (b.email !== undefined && String(b.email).trim() !== '') {
+    const e = validateEmail(b.email)
+    if (e) errors.email = e
+    else {
+      const taken = await db
+        .prepare('SELECT 1 FROM users WHERE email = ? AND id != ?')
+        .get(String(b.email).trim().toLowerCase(), req.user.id)
+      if (taken) errors.email = 'That email is already in use'
+    }
+  }
+  if (b.emergencyPhone !== undefined && String(b.emergencyPhone).trim() !== '') {
+    const e = validatePhone(String(b.emergencyPhone).replace(/\D/g, ''))
+    if (e) errors.emergencyPhone = e
+  }
+  if (Object.keys(errors).length) return res.status(400).json({ error: 'Check the form', errors })
+
+  const next = {
+    name: b.name !== undefined ? String(b.name).trim() : req.user.name,
+    email: b.email !== undefined
+      ? (String(b.email).trim() ? String(b.email).trim().toLowerCase() : null)
+      : req.user.email,
+    blood_group: b.bloodGroup !== undefined ? (b.bloodGroup || null) : req.user.blood_group,
+    medical_notes: b.medicalNotes !== undefined ? (b.medicalNotes || null) : req.user.medical_notes,
+    emergency_name: b.emergencyName !== undefined ? (b.emergencyName || null) : req.user.emergency_name,
+    emergency_phone: b.emergencyPhone !== undefined
+      ? (String(b.emergencyPhone).replace(/\D/g, '') || null)
+      : req.user.emergency_phone,
+    avatar_url: b.avatarUrl !== undefined ? (b.avatarUrl || null) : req.user.avatar_url,
+  }
+
+  await db.prepare(
+    `UPDATE users SET name=?, email=?, blood_group=?, medical_notes=?, emergency_name=?, emergency_phone=?, avatar_url=? WHERE id=?`,
+  ).run(next.name, next.email, next.blood_group, next.medical_notes, next.emergency_name, next.emergency_phone, next.avatar_url, req.user.id)
+
+  // Best-effort: an old photo replaced or removed has no reason to keep
+  // billing storage once nothing references it any more.
+  if (b.avatarUrl !== undefined && req.user.avatar_url && req.user.avatar_url !== next.avatar_url) {
+    del(req.user.avatar_url).catch(() => {})
+  }
+
+  const saved = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)
+  res.json({ user: publicUser(saved) })
+})
